@@ -1,5 +1,5 @@
 import { BrowserMultiFormatReader } from '@zxing/browser';
-import { BarcodeFormat, DecodeHintType, NotFoundException } from '@zxing/library';
+import { BarcodeFormat, ChecksumException, DecodeHintType, FormatException, NotFoundException } from '@zxing/library';
 
 export async function openScanner(video: HTMLVideoElement, onCode: (code: string) => void, onError: (error: unknown) => void) {
   const formats = [
@@ -11,7 +11,7 @@ export async function openScanner(video: HTMLVideoElement, onCode: (code: string
     { video: { facingMode: { ideal: 'environment' } }, audio: false }, video,
     (result, error, active) => {
       if (result) { active.stop(); onCode(result.getText()); }
-      else if (error && !(error instanceof NotFoundException) && !['ChecksumException', 'FormatException'].includes(error.constructor.name)) {
+      else if (error && !(error instanceof NotFoundException || error instanceof ChecksumException || error instanceof FormatException)) {
         active.stop(); onError(error);
       }
     },

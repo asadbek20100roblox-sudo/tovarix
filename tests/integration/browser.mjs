@@ -14,7 +14,7 @@ test('mobile Supabase checkout, persisted offline request, and real retry', { ti
     await page.getByRole('textbox', { name: 'Email' }).fill('cashier-' + Date.now() + '@example.com');
     await page.getByLabel('Password').fill('Disposable-Tovarix-2026!');
     await page.getByRole('button', { name: 'Register', exact: true }).click();
-    await page.getByText('Create business', { exact: true }).click();
+    await page.locator('summary').filter({ hasText: 'Create business' }).click();
     await page.getByRole('textbox', { name: 'Business', exact: true }).fill('Integration test');
     await page.getByRole('textbox', { name: 'Location', exact: true }).fill('Main');
     await page.getByRole('button', { name: 'Create business', exact: true }).click();
@@ -25,6 +25,13 @@ test('mobile Supabase checkout, persisted offline request, and real retry', { ti
     await page.getByRole('spinbutton', { name: 'Cost', exact: true }).fill('3000');
     await page.getByRole('button', { name: 'Save', exact: true }).click();
     await page.getByText('Tea', { exact: true }).waitFor();
+    await page.getByRole('button', { name: 'Label', exact: true }).click();
+    const barcodeImage = page.locator('.label-print img');
+    await barcodeImage.waitFor();
+    assert.ok(await barcodeImage.evaluate(image => image.naturalWidth > 0));
+    const download = page.waitForEvent('download');
+    await page.getByRole('button', { name: 'Export Excel', exact: true }).click();
+    assert.equal((await download).suggestedFilename(), 'tovarix-catalog.xlsx');
     await page.getByRole('button', { name: 'Inventory', exact: true }).click();
     await page.getByRole('spinbutton', { name: 'Change' }).fill('2');
     await page.getByRole('textbox', { name: 'Reason' }).fill('Initial stock');

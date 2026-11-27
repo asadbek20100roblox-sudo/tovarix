@@ -226,8 +226,23 @@ function Operations({ client, user, business, store, stores, lang, refresh }: {
     setError('');
     setAnswer('');
     try {
+      const file = values.get('photo');
+      let image: { mimeType: string; data: string } | undefined;
+      if (file instanceof File && file.size > 0) {
+        if (file.size > 1_400_000 || !['image/jpeg', 'image/png', 'image/webp'].includes(file.type)) {
+          throw new Error(lang === 'ru' ? 'Выберите JPEG, PNG или WebP до 1,4 МБ'
+            : lang === 'en' ? 'Choose a JPEG, PNG, or WebP up to 1.4 MB' : '1,4 MB gacha JPEG, PNG yoki WebP tanlang');
+        }
+        const encoded = await new Promise<string>((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = () => resolve(String(reader.result).split(',')[1]);
+          reader.onerror = () => reject(reader.error);
+          reader.readAsDataURL(file);
+        });
+        image = { mimeType: file.type, data: encoded };
+      }
       const { data, error } = await client.functions.invoke('tovarix-ai', {
-        body: { business, question: String(values.get('question')) },
+        body: { business, question: String(values.get('question')), image },
       });
       if (error) throw error;
       setAnswer(data.answer);
@@ -295,9 +310,9 @@ function Operations({ client, user, business, store, stores, lang, refresh }: {
 
   async function makeLabel(product: Product) {
     try {
-      const { code128 } = await import('bwip-js/browser');
+      const { renderBarcode } = await import('./barcode-label');
       const canvas = document.createElement('canvas');
-      code128(canvas, { bcid: 'code128', text: product.barcode, scale: 2, height: 12, includetext: true });
+      renderBarcode(canvas, product.barcode);
       setReceipt(null);
       setLabel({ ...product, image: canvas.toDataURL('image/png') });
     } catch (err) { setError(explain(err)); }
@@ -542,6 +557,8 @@ function Operations({ client, user, business, store, stores, lang, refresh }: {
       <form onSubmit={e => void ask(e)}>
         <input name="question" required maxLength={2000} aria-label="TOVARIX AI"
           placeholder={lang === 'ru' ? 'Спросить о продажах' : lang === 'en' ? 'Ask about sales' : 'Savdolar haqida savol'} />
+        <input name="photo" type="file" accept="image/jpeg,image/png,image/webp"
+          aria-label={lang === 'ru' ? 'Фото товара' : lang === 'en' ? 'Product photo' : 'Mahsulot surati'} />
         <button disabled={asking}>{lang === 'ru' ? 'Спросить' : lang === 'en' ? 'Ask' : 'So‘rash'}</button>
       </form>
       {answer && <article className="ai-answer">{answer}</article>}
