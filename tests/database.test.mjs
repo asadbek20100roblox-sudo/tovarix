@@ -114,8 +114,27 @@ test('tenant isolation, stock atomicity and idempotent checkout', async () => {
     await assert.rejects(db.query("select public.set_staff_display_name($1,$2,'Self rename')", [business, user(3)]), /permission denied/);
     await assert.rejects(db.query("select public.dashboard_cash($1,$2,now()-interval '1 day',now())", [business, store]), /permission denied/);
     assert.equal((await db.query('select count(*)::int as n from public.sales')).rows[0].n, 0);
+    await assert.rejects(db.query('select cost from public.products'), /permission denied/);
+    await assert.rejects(db.query('select cost from public.sales'), /permission denied/);
+    await assert.rejects(db.query('select items from public.sales'), /permission denied/);
+    await assert.rejects(db.query('select cost from public.partial_returns'), /permission denied/);
+    await assert.rejects(db.query('select total_uzs from public.purchases'), /permission denied/);
+    assert.ok((await db.query('select cost from public.catalog_access')).rows.every(row => row.cost === null));
+    await db.query('select public.change_shift($1,$2,0,false)', [business, store]);
+    const { rows:[{ id: employeeSale }] } = await db.query(
+      'select public.checkout($1,$2,gen_random_uuid(),$3,5000,0,0,5000) as id',
+      [business,store,JSON.stringify([{ product_id: product, quantity: 1 }])]);
+    const { rows:[receipt] } = await db.query('select cost,items from public.sales_access where id=$1',[employeeSale]);
+    assert.equal(receipt.cost,null);
+    assert.equal(receipt.items[0].partial_returnable,true);
+    assert.equal('unit_cost' in receipt.items[0],false);
+    await db.exec(login(1));
+    assert.equal(Number((await db.query('select cost from public.catalog_access where id=$1',[product])).rows[0].cost),3000);
+    await db.query("select public.set_staff($1,$2,'cashier',array['sell','cost'])",[business,user(3)]);
+    await db.exec(login(3));
+    assert.equal(Number((await db.query('select cost from public.sales_access where id=$1',[employeeSale])).rows[0].cost),3000);
     await db.exec(login(2));
-    assert.deepEqual((await db.query('select * from public.products')).rows, []);
+    assert.deepEqual((await db.query('select id from public.products')).rows, []);
     await assert.rejects(db.query("select public.adjust_stock($1,$2,$3,1,'Other')", [business, store, product]), /permission denied/);
     await assert.rejects(checkout(1), /permission denied/);
   } finally {

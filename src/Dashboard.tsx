@@ -8,7 +8,7 @@ export const dashboardCopy = {
 } as const;
 
 export type DashboardData = {
-  revenue: number; profit: number; count: number; inventoryValue: number;
+  revenue: number; profit: number | null; count: number; inventoryValue: number | null;
   expenses: number | null;
   openingCash: number | null;
   currentCash?: number | null;
@@ -25,9 +25,9 @@ export function Dashboard({ data, lang, days, setDays, storeName, money, go, lim
   const scale = Math.max(1, ...data.days.map(day => day.value));
   const metrics = [
     { icon: Wallet, label: t[1], value: money(data.revenue), tone: 'blue', note: t[22] },
-    { icon: ArrowUpRight, label: t[2], value: money(data.profit), tone: 'green', note: t[22] },
+    { icon: ArrowUpRight, label: t[2], value: data.profit === null ? '—' : money(data.profit), tone: 'green', note: t[22] },
     { icon: ReceiptText, label: t[3], value: new Intl.NumberFormat(lang).format(data.count), tone: 'violet', note: t[22] },
-    { icon: Boxes, label: t[4], value: money(data.inventoryValue), tone: 'amber', note: t[23] },
+    { icon: Boxes, label: t[4], value: data.inventoryValue === null ? '—' : money(data.inventoryValue), tone: 'amber', note: t[23] },
   ];
   return <div className="dashboard page-enter">
     <div className="page-heading"><div><p className="section-caption"><span className="small-dot" />{storeName}</p><h1>{t[0]}</h1></div>

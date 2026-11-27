@@ -6,7 +6,7 @@ const columns = [
   { header: 'price', key: 'price', width: 16 }, { header: 'cost', key: 'cost', width: 16 },
 ];
 
-export async function exportCatalog(products: ProductRow[]) {
+export async function exportCatalog(products: (Omit<ProductRow, 'cost'> & { cost: number | null })[]) {
   const book = new Workbook();
   const sheet = book.addWorksheet('Catalog');
   sheet.columns = columns;

@@ -15,12 +15,12 @@ import { SupportDesk } from './SupportDesk';
 import { plans } from './plans';
 
 type Named = { id: string; name: string };
-type Product = Named & { barcode: string; price: number; cost: number; attributes: Record<string, string> };
+type Product = Named & { barcode: string; price: number; cost: number | null; attributes: Record<string, string> };
 type Stock = { product_id: string; quantity: number };
-type Item = { product_id: string; name: string; quantity: number; price: number; weighted?: boolean; unit_cost?: number };
-type Sale = { id: string; total: number; cost: number; created_at: string; items: Item[]; sale_returns?: { sale_id: string } | null; partial_returns?: { product_id: string; quantity: number; total: number; cost: number }[] };
+type Item = { product_id: string; name: string; quantity: number; price: number; weighted?: boolean; partial_returnable?: boolean };
+type Sale = { id: string; total: number; cost: number | null; created_at: string; items: Item[]; sale_returns?: { sale_id: string } | null; partial_returns?: { product_id: string; quantity: number; total: number }[] };
 type Report = {
-  totals: { sales: number; revenue: number; profit: number; cash: number; card: number };
+  totals: { sales: number; revenue: number; profit: number | null; cash: number; card: number };
   branches: { id: string; name: string; sales: number; revenue: number }[];
   operators: { operator_id: string; sales: number; revenue: number }[];
   popular: { id: string; name: string; units: number }[];
@@ -45,13 +45,28 @@ const attributeNames = {
   en: ['Size', 'Color', 'Batch', 'Expires', 'Serial number', 'Warranty', 'Unit of measure'],
 } as const;
 const attributeKeys = ['size','color','batch','expiry','serial','warranty','unit'];
-const permissions = ['sell','discount','inventory','catalog','stores','analytics','audit','staff','supplier','customer','ai','returns'];
-type Purchase = { id: string; product_id: string; quantity: number; total_uzs: number; reference: string };
+const permissions = ['sell','discount','inventory','catalog','stores','analytics','audit','staff','supplier','customer','ai','returns','cost','profit'];
+type Purchase = { id: string; product_id: string; quantity: number; total_uzs: number | null; reference: string };
 type Contact = Named & { phone: string | null };
 type Staff = { user_id: string; role: string; permissions: string[]; store_scope: string[] | null; display_name: string | null; blocked_at: string | null };
 const empty: Snapshot = { products: [], stock: [], sales: [] };
 const explain = (error: unknown) => error && typeof error === 'object' && 'message' in error
   ? String(error.message) : String(error);
+
+function withoutFinancialData(data: Snapshot): Snapshot {
+  return {
+    stock: data.stock,
+    products: data.products.map(product => ({ ...product, cost: null })),
+    sales: data.sales.map(sale => ({
+      id: sale.id, total: sale.total, created_at: sale.created_at, cost: null, sale_returns: sale.sale_returns,
+      items: sale.items.map(item => ({
+        product_id: item.product_id, name: item.name, quantity: item.quantity, price: item.price, weighted: item.weighted,
+        partial_returnable: item.partial_returnable === true || 'unit_cost' in item,
+      })),
+      partial_returns: sale.partial_returns?.map(item => ({ product_id: item.product_id, quantity: item.quantity, total: item.total })),
+    })),
+  };
+}
 
 function load<T>(key: string, fallback: T): T {
   try { return JSON.parse(localStorage.getItem(key) ?? 'null') ?? fallback; }
@@ -222,9 +237,21 @@ function Operations({ client, user, business, store, stores, lang, refresh, prof
   lang: Language; refresh: (update: (n: number) => number) => void;
 }) {
   const scope = [user, business, store].join('.');
-  const cacheKey = 'tovarix.cache.' + scope;
+  const legacyCacheKey = 'tovarix.cache.' + scope;
+  const cacheKey = legacyCacheKey + '.v041';
+  const [finance, setFinance] = useState({ cost: false, profit: false });
+  useEffect(() => {
+    try {
+      const legacy = load<Snapshot | null>(legacyCacheKey, null);
+      if (legacy && !localStorage.getItem(cacheKey)) localStorage.setItem(cacheKey, JSON.stringify(withoutFinancialData(legacy)));
+      localStorage.removeItem(legacyCacheKey);
+    } catch { /* Optional storage. */ }
+  }, [legacyCacheKey, cacheKey]);
   const outboxKey = 'tovarix.outbox.' + scope;
-  const [snapshot, setSnapshot] = useState(() => load(cacheKey, empty));
+  const [snapshot, setSnapshot] = useState(() => {
+    try { return withoutFinancialData(load(cacheKey, load(legacyCacheKey, empty))); }
+    catch { return empty; }
+  });
   const [queue, setQueue] = useState<QueueEntry[]>([]);
   const [queueReady, setQueueReady] = useState(false);
   const [online, setOnline] = useState(navigator.onLine);
@@ -303,27 +330,29 @@ function Operations({ client, user, business, store, stores, lang, refresh, prof
     } catch (err) { setError(explain(err)); }
     finally { setAsking(false); }
   }
-  const money = (value: number) => new Intl.NumberFormat(lang, { style: 'currency', currency: 'UZS', maximumFractionDigits: 0 }).format(value);
+  const money = (value: number | null) => value === null ? '—' : new Intl.NumberFormat(lang, { style: 'currency', currency: 'UZS', maximumFractionDigits: 0 }).format(value);
 
   useEffect(() => {
     let active = true;
     void Promise.all([
-      client.from('products').select('id,name,barcode,price,cost,attributes').eq('business_id', business).order('name'),
+      client.from('catalog_access').select('id,name,barcode,price,cost,attributes').eq('business_id', business).order('name'),
       client.from('stock').select('product_id,quantity').eq('business_id', business).eq('store_id', store),
-      client.from('sales').select('id,total,cost,created_at,items,sale_returns(sale_id),partial_returns(product_id,quantity,total,cost)').eq('business_id', business).eq('store_id', store).order('created_at', { ascending: false }).limit(250),
+      client.from('sales_access').select('id,total,cost,created_at,items,sale_returns(sale_id),partial_returns(product_id,quantity,total)').eq('business_id', business).eq('store_id', store).order('created_at', { ascending: false }).limit(250),
+      client.rpc('financial_access', { p_business: business }),
       client.from('shifts').select('id,opening_cash,opened_at').eq('business_id', business).eq('store_id', store).eq('operator_id', user).is('closed_at', null).maybeSingle(),
-    ]).then(([products, stock, sales, shifts]) => {
+    ]).then(([products, stock, sales, access, shifts]) => {
       if (!active) return;
-      const issue = products.error ?? stock.error ?? sales.error ?? shifts.error;
+      const issue = products.error ?? stock.error ?? sales.error ?? access.error ?? shifts.error;
       if (issue) { setError(issue.message); return; }
       setShift(shifts.data);
+      setFinance(access.data ?? { cost: false, profit: false });
       const records: Sale[] = (sales.data ?? []).map(row => {
         const returns = row.sale_returns;
         return { ...row, sale_returns: Array.isArray(returns) ? returns[0] ?? null : returns };
       });
       const data = { products: products.data ?? [], stock: stock.data ?? [], sales: records };
       setSnapshot(data);
-      try { localStorage.setItem(cacheKey, JSON.stringify(data)); }
+      try { localStorage.setItem(cacheKey, JSON.stringify(withoutFinancialData(data))); }
       catch { /* Online data remains usable when browser storage is full. */ }
     });
     return () => { active = false; };
@@ -336,7 +365,7 @@ function Operations({ client, user, business, store, stores, lang, refresh, prof
         .then(result => { if (active) { setContacts(result.data ?? []); if (result.error) setError(result.error.message); } });
     }
     if (tab === 10) {
-      void client.from('purchases').select('id,product_id,quantity,total_uzs,reference').eq('business_id', business)
+      void client.from('purchase_access').select('id,product_id,quantity,total_uzs,reference').eq('business_id', business)
         .eq('store_id', store).order('created_at', { ascending: false }).limit(250)
         .then(result => { if (active) { setPurchases(result.data ?? []); if (result.error) setError(result.error.message); } });
     }
@@ -416,7 +445,6 @@ function Operations({ client, user, business, store, stores, lang, refresh, prof
   const sales = snapshot.sales.filter(s => !s.sale_returns).map(s => ({
     ...s,
     total: s.total - (s.partial_returns ?? []).reduce((sum, returned) => sum + returned.total, 0),
-    cost: s.cost - (s.partial_returns ?? []).reduce((sum, returned) => sum + returned.cost, 0),
   }));
   const branchName = stores.find(item => item.id === store)?.name ?? t[7];
   const critical = snapshot.products.filter(p => quantity(p.id) <= 5).map(p => ({ id: p.id, name: p.name, quantity: quantity(p.id) }));
@@ -498,8 +526,8 @@ function Operations({ client, user, business, store, stores, lang, refresh, prof
           }
           await saveSale({ ...entry, status: 'confirmed' });
           reload(n => n + 1);
-          const row = await client.from('sales').select('id,total,cost,created_at,items').eq('id', data).single();
-          if (row.data) { setLabel(null); setReceipt(row.data); }
+          const row = await client.from('sales_access').select('id,total,created_at,items').eq('id', data).single();
+          if (row.data) { setLabel(null); setReceipt({ ...row.data, cost: null }); }
         }
         const all = await listSales(scope);
         const old = all.filter(entry => entry.status === 'confirmed').slice(0, -50);
@@ -582,9 +610,9 @@ function Operations({ client, user, business, store, stores, lang, refresh, prof
     {tab === 0 && <Dashboard lang={lang} days={period} setDays={setPeriod} storeName={branchName} money={money} go={change}
       limited={true} data={{
         revenue: periodSales.reduce((sum, s) => sum + s.total, 0),
-        profit: periodSales.reduce((sum, s) => sum + s.total - s.cost, 0),
+        profit: finance.profit && periodSales.every(s => s.cost !== null) ? periodSales.reduce((sum, s) => sum + s.total - (s.cost ?? 0), 0) : null,
         count: periodSales.length,
-        inventoryValue: snapshot.products.reduce((sum, p) => sum + Number(p.cost) * quantity(p.id), 0),
+        inventoryValue: finance.cost && snapshot.products.every(p => p.cost !== null) ? snapshot.products.reduce((sum, p) => sum + Number(p.cost) * quantity(p.id), 0) : null,
         openingCash: shift ? Number(shift.opening_cash) : null, expenses: cashOverview?.expenses ?? null, currentCash: cashOverview?.cash, critical, days: daily,
         recent: snapshot.sales.slice(0, 4).map(s => ({ id: s.id, date: s.created_at, total: s.total, title: s.sale_returns ? d[24] : d[17], returned: !!s.sale_returns })),
       }} />}
@@ -592,9 +620,9 @@ function Operations({ client, user, business, store, stores, lang, refresh, prof
       {snapshot.sales.map(s => <article key={s.id}><span>{new Date(s.created_at).toLocaleString(lang)} · {money(s.total)}
         {s.sale_returns && ' · ' + lifecycle[4]}</span>
         <button onClick={() => { setLabel(null); setReceipt(s); }}>{t[21]}</button>
-        {!s.sale_returns && s.items.some(item => item.unit_cost !== undefined) && <details>
+        {!s.sale_returns && s.items.some(item => item.partial_returnable === true) && <details>
           <summary>{lang === 'ru' ? 'Частичный возврат' : lang === 'uz' ? 'Qisman qaytarish' : 'Partial return'}</summary>
-          {s.items.filter(item => item.unit_cost !== undefined).map(item => {
+          {s.items.filter(item => item.partial_returnable === true).map(item => {
             const returned = (s.partial_returns ?? []).filter(r => r.product_id === item.product_id).reduce((sum, r) => sum + Number(r.quantity), 0);
             const maximum = Math.round((item.quantity - returned) * 1000) / 1000;
             const requestKey = item.product_id + ':' + maximum;
@@ -900,7 +928,7 @@ function Operations({ client, user, business, store, stores, lang, refresh, prof
       <div className="grid">
         <article>{t[29]}<strong>{money(report.totals.revenue)}</strong></article>
         <article>{t[30]}<strong>{money(report.totals.profit)}</strong></article>
-        <article>{management[8]}<strong>{report.totals.revenue ? new Intl.NumberFormat(lang, { style: 'percent', maximumFractionDigits: 1 }).format(report.totals.profit / report.totals.revenue) : '—'}</strong></article>
+        <article>{management[8]}<strong>{report.totals.revenue && report.totals.profit !== null ? new Intl.NumberFormat(lang, { style: 'percent', maximumFractionDigits: 1 }).format(report.totals.profit / report.totals.revenue) : '—'}</strong></article>
         <article>{t[16]}<strong>{money(report.totals.cash)}</strong></article>
         <article>{t[17]}<strong>{money(report.totals.card)}</strong></article>
       </div>
