@@ -7,6 +7,7 @@ import { internalBarcode, saleTotal } from './commerce';
 import { importLegacySale, listSales, removeSale, saveSale } from './sale-queue';
 import type { QueueEntry } from './sale-queue';
 import { Barcode, CreditCard, LogOut, Moon, Package, Plus, RotateCw, Search, ShoppingCart, Sun, Wallet } from 'lucide-react';
+import { AccountAccess } from './AccountAccess';
 import { AppNavigation, Brand } from './AppNavigation';
 import { Dashboard, dashboardCopy } from './Dashboard';
 import { HardwareDiagnostics } from './HardwareDiagnostics';
@@ -26,7 +27,7 @@ type Report = {
   slow: { id: string; name: string; units: number }[];
 };
 type Billing = {
-  plan: string; paid_until: string | null; trial_until: string;
+  plan: string; paid_until: string | null; trial_until: string | null; trial_started_at: string | null;
   payments: { amount_uzs: number; captured_at: string; provider: string; plan: string }[];
 };
 type Expense = { id: string; amount: number; description: string };
@@ -47,7 +48,7 @@ const attributeKeys = ['size','color','batch','expiry','serial','warranty','unit
 const permissions = ['sell','discount','inventory','catalog','stores','analytics','audit','staff','supplier','customer','ai','returns'];
 type Purchase = { id: string; product_id: string; quantity: number; total_uzs: number; reference: string };
 type Contact = Named & { phone: string | null };
-type Staff = { user_id: string; role: string; permissions: string[]; store_scope: string[] | null; display_name: string | null };
+type Staff = { user_id: string; role: string; permissions: string[]; store_scope: string[] | null; display_name: string | null; blocked_at: string | null };
 const empty: Snapshot = { products: [], stock: [], sales: [] };
 const explain = (error: unknown) => error && typeof error === 'object' && 'message' in error
   ? String(error.message) : String(error);
@@ -59,6 +60,7 @@ function load<T>(key: string, fallback: T): T {
 
 export function Workspace({ client }: { client: SupabaseClient }) {
   const [session, setSession] = useState<Session | null>();
+  const [recovering, setRecovering] = useState(false);
   const [lang, setLang] = useState<Language>(() => {
     const value = localStorage.getItem('tovarix.language');
     return value === 'ru' || value === 'en' ? value : 'uz';
@@ -67,7 +69,16 @@ export function Workspace({ client }: { client: SupabaseClient }) {
   const [status, setStatus] = useState('');
   const t = labels[lang];
   useEffect(() => {
-    const { data } = client.auth.onAuthStateChange((_event, next) => setSession(next));
+    if (session?.user.user_metadata.terms_revision === 'pilot-v0.4') {
+      void client.rpc('complete_profile').then(result => { if (result.error) setStatus(result.error.message); });
+    }
+  }, [client, session?.user.id, session?.user.user_metadata.terms_revision]);
+  useEffect(() => {
+    const { data } = client.auth.onAuthStateChange((event, next) => {
+      if (event === 'PASSWORD_RECOVERY') setRecovering(true);
+      if (event === 'SIGNED_OUT') setRecovering(false);
+      setSession(next);
+    });
     return () => data.subscription.unsubscribe();
   }, [client]);
   useEffect(() => {
@@ -75,17 +86,6 @@ export function Workspace({ client }: { client: SupabaseClient }) {
     localStorage.setItem('tovarix.language', lang);
     localStorage.setItem('tovarix.theme', dark ? 'dark' : 'light');
   }, [lang, dark]);
-
-  async function authenticate(e: FormEvent<HTMLFormElement>) {
-    e.preventDefault();
-    const data = new FormData(e.currentTarget);
-    const credentials = { email: String(data.get('email')), password: String(data.get('password')) };
-    const signup = (e.nativeEvent as SubmitEvent).submitter?.getAttribute('value') === 'signup';
-    setStatus('');
-    const result = signup ? await client.auth.signUp(credentials) : await client.auth.signInWithPassword(credentials);
-    if (result.error) setStatus(result.error.message);
-    else if (signup && !result.data.session) setStatus(t[37]);
-  }
 
   return <main className={'workspace ' + (dark ? 'dark' : 'light')}>
     <header className="brand-strip"><Brand />
@@ -107,15 +107,9 @@ export function Workspace({ client }: { client: SupabaseClient }) {
     </header>
     {status && <p role="status">{status}</p>}
     {session === undefined && <div className="loading-skeleton" aria-busy="true" /> }
-    {session === null && <section className="auth-card page-enter">
-      <div className="auth-title"><Brand /><h1>{t[24]}</h1></div>
-      <form onSubmit={e => void authenticate(e)}>
-      <input name="email" type="email" placeholder="Email" aria-label="Email" autoComplete="email" required />
-      <input name="password" type="password" placeholder={t[26]} aria-label={t[26]} autoComplete="current-password" minLength={8} required />
-      <button className="primary-button">{t[24]}</button><button value="signup">{t[25]}</button>
-    </form></section>}
-    {session && new URLSearchParams(location.search).get('mode') === 'platform' && <SupportDesk key={session.user.id} client={client} lang={lang} />}
-    {session && new URLSearchParams(location.search).get('mode') !== 'platform' && <BusinessPicker key={session.user.id} client={client} user={session.user.id} profile={typeof session.user.user_metadata.full_name === 'string' && session.user.user_metadata.full_name.trim() || session.user.email || session.user.id} lang={lang} />}
+    {(session === null || recovering) && <AccountAccess client={client} lang={lang} recovery={recovering} finishRecovery={() => setRecovering(false)} />}
+    {session && !recovering && new URLSearchParams(location.search).get('mode') === 'platform' && <SupportDesk key={session.user.id} client={client} lang={lang} />}
+    {session && !recovering && new URLSearchParams(location.search).get('mode') !== 'platform' && <BusinessPicker key={session.user.id} client={client} user={session.user.id} profile={typeof session.user.user_metadata.full_name === 'string' && session.user.user_metadata.full_name.trim() || session.user.email || session.user.id} lang={lang} />}
   </main>;
 }
 
@@ -169,17 +163,26 @@ function BusinessPicker({ client, user, lang, profile }: { client: SupabaseClien
     e.preventDefault();
     const form = e.currentTarget;
     const data = new FormData(form);
-    const { error } = await client.rpc('open_business', { p_name: data.get('name'), p_store: data.get('store') });
+    const { error } = await client.rpc('open_business_v04', {
+      p_name: data.get('name'), p_store: data.get('store'), p_type: data.get('businessType'),
+      p_address: data.get('businessAddress'), p_unit: data.get('unit'), p_register: data.get('register'),
+    });
     setError(error?.message ?? '');
     if (!error) { form.reset(); refresh(n => n + 1); }
   }
 
+  const businessTypes = ['supermarket','grocery','electronics','apparel','wholesale','construction','auto','cosmetics','pharmacy','other'];
+  const orgCopy = {
+    uz: ['Manzil','Biznes turi','O‘lchov birligi','Kassa nomi','Supermarket','Oziq-ovqat do‘koni','Elektronika','Kiyim va poyabzal','Ulgurji savdo','Qurilish mollari','Avto ehtiyot qismlar','Kosmetika','Dorixona','Boshqa','Dona','kg','l','m'],
+    ru: ['Адрес','Тип бизнеса','Единица измерения','Название кассы','Супермаркет','Продуктовый магазин','Электроника','Одежда и обувь','Оптовая торговля','Стройматериалы','Автозапчасти','Косметика','Аптека','Другой','Штука','кг','л','м'],
+    en: ['Address','Business type','Unit of measure','Register name','Supermarket','Grocery','Electronics','Clothing and footwear','Wholesale','Construction supplies','Auto parts','Cosmetics','Pharmacy','Other','Piece','kg','L','m'],
+  }[lang];
   const owner = businesses.some(item => item.id === business && item.owner_id === user);
   const roleKey = owner ? 'owner' : membership?.business === business ? membership.role : null;
   const roles = {
-    uz: { owner: 'Egasi', cashier: 'Kassir', manager: 'Boshqaruvchi', warehouse: 'Omborchi' },
-    ru: { owner: 'Владелец', cashier: 'Кассир', manager: 'Управляющий', warehouse: 'Кладовщик' },
-    en: { owner: 'Owner', cashier: 'Cashier', manager: 'Manager', warehouse: 'Warehouse' },
+    uz: { owner: 'Egasi', admin: 'Administrator', accountant: 'Hisobchi', cashier: 'Kassir', manager: 'Boshqaruvchi', warehouse: 'Omborchi' },
+    ru: { owner: 'Владелец', admin: 'Администратор', accountant: 'Бухгалтер', cashier: 'Кассир', manager: 'Управляющий', warehouse: 'Кладовщик' },
+    en: { owner: 'Owner', admin: 'Administrator', accountant: 'Accountant', cashier: 'Cashier', manager: 'Manager', warehouse: 'Warehouse' },
   }[lang];
   const role = roleKey ? roles[roleKey as keyof typeof roles] : undefined;
 
@@ -200,6 +203,14 @@ function BusinessPicker({ client, user, lang, profile }: { client: SupabaseClien
     <details><summary>{t[27]}</summary><form onSubmit={e => void create(e)}>
       <input name="name" aria-label={t[6]} placeholder={t[6]} required maxLength={200} />
       <input name="store" aria-label={t[7]} placeholder={t[7]} required maxLength={200} />
+      <input name="businessAddress" maxLength={250} aria-label={orgCopy[0]} placeholder={orgCopy[0]} />
+      <select name="businessType" aria-label={orgCopy[1]} defaultValue="other">
+        {businessTypes.map((type,index) => <option key={type} value={type}>{orgCopy[4 + index]}</option>)}
+      </select>
+      <select name="unit" aria-label={orgCopy[2]} defaultValue="piece">
+        {['piece','kg','l','m'].map((unit,index) => <option key={unit} value={unit}>{orgCopy[14 + index]}</option>)}
+      </select>
+      <input name="register" maxLength={100} aria-label={orgCopy[3]} placeholder={orgCopy[3]} />
       <button>{t[27]}</button>
     </form></details>
   </>;
@@ -257,6 +268,7 @@ function Operations({ client, user, business, store, stores, lang, refresh, prof
     en: ['Purchases','Analytics','Finance','Support','Document reference','Purchase amount','No supplier','Sales by product','Margin','Last 7 days','Previous 7 days','For support, contact the business owner or your PixelForge UZ representative.'],
   }[lang];
   const t = labels[lang];
+  const [aiQuota, setAiQuota] = useState<{ enabled: boolean; remaining: number } | null>(null);
   const [aiHistory, setAiHistory] = useState<{ id: string; question: string; answer: string }[]>([]);
   const [answer, setAnswer] = useState('');
   const [asking, setAsking] = useState(false);
@@ -359,11 +371,12 @@ function Operations({ client, user, business, store, stores, lang, refresh, prof
       });
     }
     if (tab === 9) {
+      void client.rpc('ai_remaining', { p_business: business }).then(result => { if (active) setAiQuota(result.data); });
       void client.from('ai_history').select('id,question,answer').eq('business_id', business).eq('user_id', user)
         .order('created_at', { ascending: false }).limit(20).then(result => { if (active) setAiHistory(result.data ?? []); });
     }
     if (tab === 8) {
-      void client.from('members').select('user_id,role,permissions,store_scope,display_name').eq('business_id', business)
+      void client.from('members').select('user_id,role,permissions,store_scope,display_name,blocked_at').eq('business_id', business)
         .then(result => { if (active) { setStaff(result.data ?? []); if (result.error) setError(result.error.message); } });
     }
     return () => { active = false; };
@@ -733,11 +746,18 @@ function Operations({ client, user, business, store, stores, lang, refresh, prof
         <b>{p.id}</b><span>{money(p.monthly)} / {lang === 'ru' ? 'месяц' : lang === 'uz' ? 'oy' : 'month'}</span>
         <small>{money(p.yearly)} / {lang === 'ru' ? 'год' : lang === 'uz' ? 'yil' : 'year'}</small>
         <small>{x[2]} · {p.employees ?? '∞'}</small>
+        <small>{t[2]} · {p.products?.toLocaleString(lang) ?? '∞'}</small>
+        <small>{t[4]} · {p.branches ?? '∞'}</small>
+        <small>AI · {p.aiPerDay}{({uz:' / kun',ru:' / день',en:' / day'})[lang]}</small>
       </article>)}</div>
       {billing && <section>
         <h2>{billing.plan}</h2>
         {billing.paid_until && <p>{new Date(billing.paid_until).toLocaleDateString(lang)}</p>}
-        <p>{lang === 'ru' ? 'Пробный период до' : lang === 'uz' ? 'Sinov muddati' : 'Trial ends'} {new Date(billing.trial_until).toLocaleDateString(lang)}</p>
+        {billing.trial_started_at && billing.trial_until && <p>
+          {new Date(billing.trial_started_at).toLocaleDateString(lang)} → {new Date(billing.trial_until).toLocaleDateString(lang)}
+          {' · '}{Math.max(0,Math.ceil((new Date(billing.trial_until).getTime()-Date.now())/86400000))}
+          {' '}{lang === 'ru' ? 'дней trial осталось' : lang === 'uz' ? 'sinov kuni qoldi' : 'trial days remaining'}
+        </p>}
         <form onSubmit={e => void mutate(e, async data => {
           const result = await client.rpc('redeem_promo', { p_business: business, p_code: data.get('code') });
           if (!result.error) setPromoDiscount(result.data);
@@ -773,7 +793,11 @@ function Operations({ client, user, business, store, stores, lang, refresh, prof
         }));
       }}>
         <input name="user" required placeholder={x[6]} aria-label={x[6]} />
-        <select name="role" aria-label={x[7]}><option>cashier</option><option>manager</option><option>warehouse</option></select>
+        <select name="role" aria-label={x[7]}>{Object.entries({
+          uz: { cashier: 'Kassir', manager: 'Boshqaruvchi', warehouse: 'Omborchi', admin: 'Administrator', accountant: 'Hisobchi' },
+          ru: { cashier: 'Кассир', manager: 'Управляющий', warehouse: 'Кладовщик', admin: 'Администратор', accountant: 'Бухгалтер' },
+          en: { cashier: 'Cashier', manager: 'Manager', warehouse: 'Warehouse', admin: 'Administrator', accountant: 'Accountant' },
+        }[lang]).map(([key,label]) => <option value={key} key={key}>{label}</option>)}</select>
         <fieldset><legend>{x[7]}</legend>{permissions.map(permission => <label key={permission} className="permission">
           <input type="checkbox" name="permissions" value={permission} />{permission}
         </label>)}</fieldset>
@@ -788,6 +812,12 @@ function Operations({ client, user, business, store, stores, lang, refresh, prof
           <div><small>{t[29]}</small><strong>{money(report.operators.find(item => item.operator_id === member.user_id)?.revenue ?? 0)}</strong></div>
         </div>}
         <details><summary>{x[7]}</summary><p>{member.permissions.join(', ')}</p></details>
+        {owner && <form onSubmit={e => void mutate(e, () => client.rpc('suspend_staff', {
+          p_business: business, p_user: member.user_id, p_blocked: !member.blocked_at,
+        }))}>
+          <button>{member.blocked_at ? ({uz:'Blokdan chiqarish',ru:'Разблокировать',en:'Unblock'})[lang]
+            : ({uz:'Bloklash',ru:'Заблокировать',en:'Block'})[lang]}</button>
+        </form>}
         {owner && <details><summary>{lang === 'ru' ? 'Управление аккаунтом' : lang === 'uz' ? 'Hisob boshqaruvi' : 'Manage account'}</summary>
           <form onSubmit={e => void mutate(e, data => client.rpc('set_staff_display_name', {
             p_business: business, p_user: member.user_id, p_name: data.get('displayName'),
@@ -809,12 +839,16 @@ function Operations({ client, user, business, store, stores, lang, refresh, prof
         </details></article>)}
     </>}
     {tab === 9 && <>
+      {aiQuota && <p className="section-caption">{aiQuota.enabled
+        ? ({uz:'Bugungi qolgan so‘rovlar',ru:'Запросов осталось сегодня',en:'Requests remaining today'})[lang] + ' · ' + aiQuota.remaining
+        : ({uz:'AI hozircha o‘chiq',ru:'AI пока отключён',en:'AI is currently disabled'})[lang]}</p>}
+
       <form onSubmit={e => void ask(e)}>
         <input name="question" required maxLength={2000} aria-label="TOVARIX AI"
           placeholder={lang === 'ru' ? 'Спросить о продажах' : lang === 'en' ? 'Ask about sales' : 'Savdolar haqida savol'} />
         <input name="photo" type="file" accept="image/jpeg,image/png,image/webp"
           aria-label={lang === 'ru' ? 'Фото товара' : lang === 'en' ? 'Product photo' : 'Mahsulot surati'} />
-        <button disabled={asking}>{lang === 'ru' ? 'Спросить' : lang === 'en' ? 'Ask' : 'So‘rash'}</button>
+        <button disabled={asking || aiQuota?.enabled === false || aiQuota?.remaining === 0}>{lang === 'ru' ? 'Спросить' : lang === 'en' ? 'Ask' : 'So‘rash'}</button>
       </form>
       {answer && !aiHistory.some(turn => turn.answer === answer) && <article className="ai-answer">{answer}</article>}
       {aiHistory.map(turn => <article key={turn.id} className="ai-answer"><strong>{turn.question}</strong><div>{turn.answer}</div></article>)}

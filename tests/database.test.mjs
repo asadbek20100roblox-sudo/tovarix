@@ -29,7 +29,7 @@ test('tenant isolation, stock atomicity and idempotent checkout', async () => {
     assert.deepEqual((await checkout(1)).rows, first.rows);
     await assert.rejects(db.query('select public.checkout($1,$2,gen_random_uuid(),$3,5000,0,0,5000)', [business, store, JSON.stringify([{ product_id: product, quantity: 1 }])]), /no open shift/);
     await assert.rejects(db.query("select public.set_staff($1,$2,'cashier',array['sell'])", [business, user(2)]), /employee limit reached/);
-    await assert.rejects(db.query('select public.ai_context($1)', [business]), /permission denied/);
+    await assert.rejects(db.query('select public.ai_context($1)', [business]), /AI disabled/);
     await assert.rejects(db.query("select public.capture_payment('relay','event','order',119000,'UZS')"), /permission denied/);
 
     await db.exec('set role service_role');
@@ -51,6 +51,10 @@ test('tenant isolation, stock atomicity and idempotent checkout', async () => {
     await assert.rejects(db.query("select public.open_promo_order($1,'STANDARD',1,'relay','promo-order2','TEST001')", [business]), /already assigned/);
     await assert.rejects(db.query("select public.capture_payment('relay','promo-event','promo-order',119000,'UZS')"), /order mismatch/);
     assert.equal((await db.query("select public.capture_payment('relay','promo-event','promo-order',107100,'UZS') as captured")).rows[0].captured, true);
+    await db.exec(login(1));
+    await assert.rejects(db.query("insert into public.stores(business_id,name) values($1,'Over limit')", [business]), /resource limit/);
+    await db.exec('reset role');
+    await db.query("update public.subscriptions set plan='PLUS' where business_id=$1", [business]);
     await db.exec(login(1));
     const { rows: [{ id: otherStore }] } = await db.query("insert into public.stores(business_id,name) values($1,'Second') returning id", [business]);
     const { rows: [{ id: weighted }] } = await db.query(
@@ -91,6 +95,9 @@ test('tenant isolation, stock atomicity and idempotent checkout', async () => {
     await db.exec('reset role');
     await db.query('insert into commerce_private.platform_admins values($1)', [user(4)]);
     await db.exec(login(4));
+    assert.equal((await db.query('select public.platform_overview() as panel')).rows[0].panel,null);
+    await assert.rejects(db.query("select public.resolve_ticket($1,'No second factor')", [ticket]), /permission denied/);
+    await db.exec(`set request.jwt.claims = '{"aal":"aal2"}'`);
     const {rows:[{ panel }]} = await db.query('select public.platform_overview() as panel');
     assert.equal(panel.tickets[0].id, ticket);
     await db.query("select public.resolve_ticket($1,'Resolved')", [ticket]);

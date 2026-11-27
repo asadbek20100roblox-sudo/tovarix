@@ -14,8 +14,14 @@ test('mobile Supabase checkout, persisted offline request, and real retry', { ti
     await page.getByRole('combobox', { name: 'Language' }).selectOption('ru');
     await page.getByRole('button', { name: 'Войти', exact: true }).waitFor();
     await page.getByRole('combobox', { name: 'Language' }).selectOption('en');
+    await page.getByRole('button', { name: 'Register', exact: true }).click();
+    await page.getByRole('textbox', { name: 'First name', exact: true }).fill('Synthetic');
+    await page.getByRole('textbox', { name: 'Last name', exact: true }).fill('Cashier');
+    await page.getByRole('textbox', { name: 'Contact phone (unverified)', exact: true }).fill('+998901234567');
+    await page.getByLabel('Repeat password').fill('Disposable-Tovarix-2026!');
+    await page.getByRole('checkbox', { name: 'I accept the pilot terms' }).check();
     await page.getByRole('textbox', { name: 'Email' }).fill('cashier-' + Date.now() + '@example.com');
-    await page.getByLabel('Password').fill('Disposable-Tovarix-2026!');
+    await page.getByLabel('Password', { exact:true }).fill('Disposable-Tovarix-2026!');
     await page.getByRole('button', { name: 'Register', exact: true }).click();
     await page.locator('summary').filter({ hasText: 'Create business' }).click();
     await page.getByRole('textbox', { name: 'Business', exact: true }).fill('Integration test');

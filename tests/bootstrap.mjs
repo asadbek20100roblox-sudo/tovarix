@@ -9,11 +9,13 @@ export async function bootstrap(execute) {
     create role authenticated;
     create role service_role;
     create schema auth;
-    create table auth.users(id uuid primary key);
+    create table auth.users(id uuid primary key,email text,email_confirmed_at timestamptz,raw_user_meta_data jsonb);
     create function auth.uid() returns uuid language sql stable as
       'select nullif(current_setting(''request.jwt.claim.sub'', true), '''')::uuid';
+    create function auth.jwt() returns jsonb language sql stable as
+      'select coalesce(nullif(current_setting(''request.jwt.claims'',true),''''),''{}'')::jsonb';
     grant usage on schema auth to authenticated;
-    insert into auth.users values ('${user(1)}'), ('${user(2)}'), ('${user(3)}'), ('${user(4)}');
+    insert into auth.users(id) values ('${user(1)}'), ('${user(2)}'), ('${user(3)}'), ('${user(4)}');
   `);
   for (const name of (await readdir('supabase/migrations')).sort()) {
     await execute(await readFile('supabase/migrations/' + name, 'utf8'));
