@@ -1,5 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { mkdir } from 'node:fs/promises';
+import { join } from 'node:path';
 import { chromium } from 'playwright';
 
 test('mobile Supabase checkout, persisted offline request, and real retry', { timeout: 120000 }, async () => {
@@ -9,6 +11,7 @@ test('mobile Supabase checkout, persisted offline request, and real retry', { ti
   try {
     const context = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
     const page = await context.newPage();
+    page.setDefaultTimeout(7500);
     await page.goto(base);
     assert.equal(await page.locator('html').getAttribute('lang'), 'uz');
     await page.getByRole('combobox', { name: 'Language' }).selectOption('ru');
@@ -27,6 +30,40 @@ test('mobile Supabase checkout, persisted offline request, and real retry', { ti
     await page.getByRole('textbox', { name: 'Business', exact: true }).fill('Integration test');
     await page.getByRole('textbox', { name: 'Location', exact: true }).fill('Main');
     await page.getByRole('button', { name: 'Create business', exact: true }).click();
+    const menuTab = async name => {
+      await page.locator('.bottom-navigation').getByRole('button', { name: 'Menu', exact: true }).click();
+      await page.getByRole('dialog', { name: 'Menu' }).getByRole('button', { name, exact: true }).click();
+    };
+    const screenshot = async name => {
+      const directory = process.env.TOVARIX_SCREENSHOTS;
+      if (!directory) return;
+      await mkdir(directory, { recursive: true });
+      await page.screenshot({ path: join(directory, name + '.png'), animations: 'disabled' });
+    };
+    await menuTab('Customers');
+    await page.getByRole('textbox', { name: 'Name', exact: true }).fill('Synthetic Buyer');
+    await page.getByRole('button', { name: 'Save', exact: true }).click();
+    await page.getByText('Synthetic Buyer', { exact: true }).waitFor();
+    await menuTab('Customer debts');
+    await page.getByRole('button', { name: 'Add debt' }).click();
+    const opening = page.getByRole('dialog', { name: 'Add debt' });
+    await opening.getByRole('combobox').selectOption({ label: 'Synthetic Buyer' });
+    await opening.getByLabel('Due date').fill('2020-01-01');
+    await opening.getByLabel('Amount').fill('1000');
+    await opening.getByRole('button', { name: 'Save' }).click();
+    await page.getByRole('button', { name: /Synthetic Buyer/ }).waitFor();
+    await screenshot('customer-debts');
+    await page.getByRole('button', { name: /Synthetic Buyer/ }).click();
+    const debt = page.getByRole('dialog', { name: 'Synthetic Buyer' });
+    await debt.getByLabel('Amount').fill('400');
+    await debt.getByRole('button', { name: 'Record repayment' }).click();
+    await page.getByRole('button', { name: /Synthetic Buyer.*600/ }).waitFor();
+    await menuTab('Settings');
+    const subscriptions = page.locator('section').filter({ has: page.getByRole('heading', { name: 'Subscription requests' }) });
+    await subscriptions.getByRole('button', { name: 'Submit request' }).click();
+    await subscriptions.getByText(/UZS · Pending/).waitFor();
+    assert.equal(await subscriptions.getByRole('link', { name: 'Contact us on Telegram' }).getAttribute('href'), 'https://t.me/uzPixelForge');
+    await screenshot('subscription-requests');
     await page.locator('.bottom-navigation').getByRole('button', { name: 'Menu', exact: true }).click();
     await page.getByRole('dialog', { name: 'Menu' }).getByRole('button', { name: 'Products', exact: true }).click();
     await page.getByRole('textbox', { name: 'Name', exact: true }).fill('Tea');

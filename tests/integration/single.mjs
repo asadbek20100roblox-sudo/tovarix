@@ -60,6 +60,16 @@ test('HTML opens offline from file with no adjacent assets', { timeout: 90000 },
     await page.reload();
     await nav.getByRole('button', { name: 'Inventory', exact: true }).click();
     await page.getByText('Stock · 41').waitFor();
+    for (const width of [320, 360, 390, 430, 768, 1024, 1440]) {
+      await page.setViewportSize({ width, height: 844 });
+      assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true, `Dark inventory overflow at ${width}px`);
+    }
+    await page.getByRole('button', { name: 'Theme' }).click();
+    await page.locator('main.light').waitFor();
+    for (const width of [320, 360, 390, 430, 768, 1024, 1440]) {
+      await page.setViewportSize({ width, height: 844 });
+      assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true, `Light inventory overflow at ${width}px`);
+    }
     assert.deepEqual(problems, []);
     assert.ok(requests.every(url => url === pathToFileURL(file).href), requests.join(', '));
   } finally {
