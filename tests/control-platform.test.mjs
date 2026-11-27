@@ -21,6 +21,15 @@ test('CONTROL directory and writes require confirmed AAL2 SUPER_ADMIN',async()=>
     const until=new Date(Date.now()+86400000).toISOString();
     assert.equal((await area('subscriptions','grant-plan',{id:business,plan:'PLUS',until,reason:'Synthetic grant'})).rows[0].result[0].effective_plan,'PLUS');
     await area('notifications','publish',{title:'Maintenance',message:'Synthetic announcement',kind:'maintenance'});
+    const session='b43a87db-4971-4813-8e54-0ee126da0000';
+    await db.exec(`reset role; insert into auth.sessions(id,user_id) values('${session}','${user(1)}'); ${login(1)}
+      ; set request.jwt.claims='{"aal":"aal1","session_id":"${session}"}'`);
+    assert.equal((await db.query('select id from public.businesses')).rows.length,1);
+    await db.exec(`${login(2)}; set request.jwt.claims='{"aal":"aal2"}'`);
+    await area('users','revoke-sessions',{id:user(1),reason:'Synthetic session check'});
+    await db.exec(`${login(1)}; set request.jwt.claims='{"aal":"aal1","session_id":"${session}"}'`);
+    assert.equal((await db.query('select id from public.businesses')).rows.length,0);
+    await db.exec(`${login(2)}; set request.jwt.claims='{"aal":"aal2"}'`);
     await area('users','suspend',{id:user(1),reason:'Synthetic security test'});
     assert.equal((await area('users')).rows[0].result.find(row=>row.id===user(1)).banned,true);
     await db.exec(login(1));

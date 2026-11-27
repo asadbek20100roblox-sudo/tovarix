@@ -45,12 +45,16 @@ test('synthetic alias authenticates through GoTrue and CONTROL opens only after 
     const established = await client.auth.setSession(tokens);
     assert.ifError(established.error);
     assert.equal((await client.rpc('control_ai')).error.code,'42501');
+    assert.equal((await client.rpc('control_platform',{p_area:'dashboard'})).error.code,'42501');
     const enrolled = await client.auth.mfa.enroll({factorType:'totp',friendlyName:'Disposable test'});
     assert.ifError(enrolled.error);
     const verified = await client.auth.mfa.challengeAndVerify({factorId:enrolled.data.id,code:totp(enrolled.data.totp.secret)});
     assert.ifError(verified.error);
     assert.equal((await client.auth.mfa.getAuthenticatorAssuranceLevel()).data.currentLevel,'aal2');
     assert.ifError((await client.rpc('control_ai')).error);
+    const dashboard=await client.rpc('control_platform',{p_area:'dashboard'});
+    assert.ifError(dashboard.error);
+    assert.equal(typeof dashboard.data.users,'number');
     assert.equal((await db.query("select count(*)::int n from commerce_private.platform_audit where actor=$1 and action='control.password.verified'",[uid])).rows[0].n,1);
     assert.ifError((await client.auth.signOut({scope:'global'})).error);
     assert.equal((await client.auth.getSession()).data.session,null);
