@@ -33,6 +33,14 @@ test('tenant isolation, stock atomicity and idempotent checkout', async () => {
     await assert.rejects(db.query("select public.capture_payment('relay','event','order',119000,'UZS')"), /permission denied/);
 
     await db.exec('set role service_role');
+    await assert.rejects(db.query("select public.open_billing_order($1,'STANDARD',1,'relay','order')", [business]), /permission denied/);
+    await db.exec(`reset role;
+      grant execute on function public.capture_payment(text,text,text,bigint,text),
+        commerce_private.capture_payment(text,text,text,bigint,text),
+        public.open_billing_order(uuid,text,integer,text,text),commerce_private.open_billing_order(uuid,text,integer,text,text),
+        public.open_promo_order(uuid,text,integer,text,text,text),commerce_private.open_promo_order(uuid,text,integer,text,text,text)
+        to service_role;
+      set role service_role`);
     await db.query("select public.open_billing_order($1,'STANDARD',1,'relay','order')", [business]);
     await assert.rejects(db.query("select public.capture_payment('relay','event','order',1,'UZS')"), /order mismatch/);
     assert.equal((await db.query("select public.capture_payment('relay','event','order',119000,'UZS') as captured")).rows[0].captured, true);

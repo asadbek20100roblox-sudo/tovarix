@@ -14,6 +14,7 @@ import { Dashboard, dashboardCopy } from './Dashboard';
 import { HardwareDiagnostics } from './HardwareDiagnostics';
 import { SupportDesk } from './SupportDesk';
 import { plans } from './plans';
+import { ManualSubscriptions } from './ManualSubscriptions';
 
 type Named = { id: string; name: string };
 type Product = Named & { barcode: string; price: number; cost: number | null; attributes: Record<string, string> };
@@ -779,6 +780,7 @@ function Operations({ client, user, business, store, stores, lang, refresh, prof
       <input name="name" required maxLength={200} placeholder={t[7]} aria-label={t[7]} /><button>{t[12]}</button>
     </form>}
     {tab === 5 && <>
+      <ManualSubscriptions key={business} {...{ client, lang, business }} />
       <HardwareDiagnostics lang={lang} />
       <div className="grid">{plans.map(p => <article key={p.id} className={billing?.plan === p.id ? 'current-plan' : ''}>
         <b>{p.id}</b><span>{money(p.monthly)} / {lang === 'ru' ? 'месяц' : lang === 'uz' ? 'oy' : 'month'}</span>

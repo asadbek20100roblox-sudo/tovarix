@@ -5,6 +5,7 @@ import type { Session, SupabaseClient } from '@supabase/supabase-js';
 import { LogOut, Moon, Sun } from 'lucide-react';
 import { Brand } from './AppNavigation';
 import { SupportDesk } from './SupportDesk';
+import { ManualSubscriptions } from './ManualSubscriptions';
 import { languageNames } from './labels';
 import type { Language } from './labels';
 import { connectSupabase } from './supabase';
@@ -101,6 +102,7 @@ function Control({ client }: { client: SupabaseClient | null }) {
     </section>}
     {status && <p role="alert">{status}</p>}
     {client && session && state === 'ready' && <SupportDesk client={client} lang={lang} />}
+    {client && session && state === 'ready' && <ManualSubscriptions key={session.user.id} client={client} lang={lang} />}
   </main>;
 }
 
