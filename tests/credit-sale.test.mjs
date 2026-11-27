@@ -41,6 +41,18 @@ test('credit checkout creates one outgoing sale and debt with zero cash, and set
     await rows("select public.cancel_manual_debt($1,$2,'Error creating manual debt')",[b,payable]);
     assert.equal((await fetch('supplier')).rows[0].balance,0);
     await assert.rejects(rows("select public.cancel_manual_debt($1,$2,'Wrong correction')",[b,debtId]),/financial reversal/);
+    for(let i=0;i<3;i++){
+      const [{id}]=await rows("select public.write_debt($1,gen_random_uuid(),100,'History',$2,current_date-6,null) id",[b,c]);
+      await rows("select public.record_debt_payment($1,gen_random_uuid(),$2,100,'Settled','card')",[b,id]);
+    }
+    assert.equal((await fetch('customer')).rows[0].samples,null);
+    await db.exec('reset role');
+    await rows("update public.subscriptions set plan='STANDARD',paid_until=now()+interval '1 day' where business_id=$1",[b]);
+    await db.exec(login(1));
+    const smart=await fetch('customer');
+    assert.equal(smart.smart,true);
+    assert.equal(smart.rows[0].samples,3);
+    assert.equal(smart.rows[0].late,3);
     await db.exec(login(2));
     await assert.rejects(fetch('customer'),/permission denied/);
   } finally { await db.close(); }

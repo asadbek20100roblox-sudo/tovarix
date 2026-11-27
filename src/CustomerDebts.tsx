@@ -18,7 +18,7 @@ const ledgerCopy = {
 } as const;
 const day = (offset: number) => new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Tashkent',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date(Date.now()+offset*86400000));
 
-type Debt = { id: string; name: string; phone: string | null; due_on: string; days: number; balance: number; opened:number; repaid:number; created_at:string; cancelled_at:string|null; sale_id:string|null };
+type Debt = { id: string; name: string; phone: string | null; due_on: string; days: number; balance: number; opened:number; repaid:number; created_at:string; cancelled_at:string|null; sale_id:string|null; samples:number|null; late:number|null };
 type Overview = { total: string; count: number; overdue:string; due_today:string; repaid:string; smart:boolean; rows: Debt[] };
 type Entry = { request_id: string; kind: string; amount: number|null; created_at: string; note: string; payment_method:string|null };
 const statuses = ['all','overdue','today','active','paid','partial','cancelled'] as const;
@@ -194,6 +194,15 @@ export function CustomerDebts({ client, business, lang }: { client: SupabaseClie
         ).then(()=>setNotice(l[16])).catch(()=>setPanelError(t[21]))}>{l[14]}</button>}
         {overview?.smart&&kind==='customer'&&panel.balance>=3&&<p className="section-caption">
           {({uz:'Taklif: to‘lovni uch qismga bo‘lib kelishing, birinchi to‘lov',ru:'Предложение: согласуйте три платежа. Первый взнос',en:'Suggested schedule: agree on three instalments. First payment'})[lang]} · {money(Math.ceil(panel.balance/3))}
+        </p>}
+        {overview?.smart&&panel.samples!==null&&panel.late!==null&&<p className="section-caption">
+          {panel.late*2>=panel.samples
+            ? ({uz:'Kechikish xavfi: yuqoriroq',ru:'Риск просрочки: повышенный',en:'Late payment risk: elevated'})[lang]
+            : ({uz:'Kechikish xavfi: pastroq',ru:'Риск просрочки: ниже',en:'Late payment risk: lower'})[lang]}
+          {' · '}{panel.late}/{panel.samples}{' '}
+          {({uz:'qarz dastlabki muddatdan kech yopilgan (365 kun). Bu kafolat emas.',
+            ru:'долгов закрыто позже исходного срока за 365 дней. Это ориентир.',
+            en:'debts closed after their original due date in 365 days. This is an estimate.'})[lang]}
         </p>}
         {notice&&<p role="status">{notice}</p>}
         <h3>{t[17]}</h3><ul className="debt-history">{history.slice(0,20).map(entry=><li key={entry.request_id}>

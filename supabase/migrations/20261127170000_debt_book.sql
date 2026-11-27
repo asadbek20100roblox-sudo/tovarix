@@ -74,16 +74,19 @@ create function commerce_private.debt_book(p_business uuid,p_kind text,p_search 
 returns jsonb language plpgsql stable security definer set search_path='' as $$
 declare result jsonb; today date := (now() at time zone 'Asia/Tashkent')::date;
   term text:=lower(left(trim(coalesce(p_search,'')),100));
+  smart boolean;
 begin
   if not commerce_private.debt_allowed(p_business) or (p_kind='supplier' and not commerce_private.can_access(p_business,'supplier')) then
     raise exception 'permission denied' using errcode='42501'; end if;
   if p_kind is null or p_kind not in ('customer','supplier') or p_status is null or p_status not in ('all','overdue','today','active','paid','partial','cancelled')
     or p_sort is null or p_offset is null or p_sort not in ('due','balance','newest') or p_offset not between 0 and 100000
     or p_from is null or p_until is null or p_until-p_from not between 0 and 366 then raise exception 'invalid filters'; end if;
+  smart:=commerce_private.has_feature(p_business,'smart_qarz');
   with records as (
-    select d.id,d.due_on,d.created_at,d.cancelled_at,d.sale_id,c.id contact_id,c.name,c.phone,
+    select d.id,d.due_on,d.original_due_on,d.created_at,d.cancelled_at,d.sale_id,c.id contact_id,c.name,c.phone,
       sum(e.amount) filter(where e.kind='opening') opened,
       coalesce(sum(e.amount) filter(where e.kind='repayment'),0) repaid,
+      (max(e.created_at) filter(where e.kind='repayment') at time zone 'Asia/Tashkent')::date settled_on,
       coalesce(sum(e.amount) filter(where e.kind='repayment' and
         e.created_at>=p_from::timestamp at time zone 'Asia/Tashkent' and e.created_at<(p_until+1)::timestamp at time zone 'Asia/Tashkent'),0) period_repaid
     from commerce_private.customer_debts d join public.contacts c on c.id=d.customer_id and c.business_id=d.business_id
@@ -91,18 +94,23 @@ begin
     where d.business_id=p_business and c.kind=p_kind group by d.id,c.id
   ), balances as materialized (
     select *, (case when cancelled_at is null then opened-repaid else 0 end)::bigint balance, due_on-today days from records
+  ), risk_history as (
+    select contact_id,count(*) samples,count(*) filter(where settled_on>original_due_on) late
+    from balances where smart and p_kind='customer' and cancelled_at is null and balance=0 and settled_on>=today-365
+    group by contact_id having count(*)>=3
   ), page as (
-    select id,due_on,created_at,cancelled_at,sale_id,name,phone,opened,repaid,balance,days,row_number() over (
+    select id,due_on,created_at,cancelled_at,sale_id,name,phone,opened,repaid,balance,days,
+      risk_history.samples,risk_history.late,row_number() over (
       order by case when p_sort='balance' then balance end desc,case when p_sort='newest' then created_at end desc,
         due_on,id) as seq
-    from balances where (term='' or strpos(lower(name),term)>0 or strpos(lower(coalesce(phone,'')),term)>0)
+    from balances left join risk_history using(contact_id) where (term='' or strpos(lower(name),term)>0 or strpos(lower(coalesce(phone,'')),term)>0)
      and (p_status='all' or (p_status='cancelled' and cancelled_at is not null) or (p_status='paid' and balance=0 and cancelled_at is null) or (balance>0 and
        (p_status='active' or (p_status='overdue' and days<0) or (p_status='today' and days=0) or (p_status='partial' and repaid>0))))
     order by seq limit 21 offset p_offset
   )
   select jsonb_build_object('total',coalesce(sum(balance),0)::text,'count',count(distinct contact_id) filter(where balance>0),
     'overdue',coalesce(sum(balance) filter(where days<0),0)::text,'due_today',coalesce(sum(balance) filter(where days=0),0)::text,
-    'repaid',coalesce(sum(period_repaid),0)::text,'smart',commerce_private.has_feature(p_business,'smart_qarz'),
+    'repaid',coalesce(sum(period_repaid),0)::text,'smart',smart,
     'rows',coalesce((select jsonb_agg(to_jsonb(page)-'seq' order by seq) from page),'[]')) into result from balances;
   return result;
 end
