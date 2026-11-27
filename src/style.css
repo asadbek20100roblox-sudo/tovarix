@@ -322,3 +322,16 @@ button:active:not(:disabled) { transform: scale(.98); }
 .ai-chart [aria-pressed=true] span { background: #397ef0; }
 .ai-proposal { border-inline-start: 3px solid #835ce0; }
 @media (prefers-reduced-motion: reduce) { .ai-turn, .ai-generating { animation: none; } }
+
+.control-console { display: grid; grid-template-columns: minmax(170px,210px) minmax(0,1fr); align-items: start; gap: 1rem; }
+.control-sections { display: grid; gap: .35rem; }
+.control-sections button { text-align: start; white-space: nowrap; }
+.control-sections [aria-current] { background: var(--primary); color: #fff; }
+.control-record { margin-block: .55rem; overflow-wrap: anywhere; }
+.control-record :is(small,time) { display: block; }
+.control-plan-chart label { display: grid; grid-template-columns: 6rem 1fr 2rem; align-items: center; gap: .5rem; margin-block: .35rem; }
+.control-plan-chart meter { width: 100%; }
+@media(max-width:720px) {
+  .control-console { grid-template-columns: minmax(0,1fr); }
+  .control-sections { display: flex; overflow-x: auto; padding-bottom: .35rem; }
+}

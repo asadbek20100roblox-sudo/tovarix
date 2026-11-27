@@ -41,7 +41,7 @@ export function ManualSubscriptions({ client, lang, business }: { client: Supaba
   const [view, setView] = useState<Response>();
   const [error, setError] = useState(false);
   const [busy, setBusy] = useState(false);
-  const pending = useRef<{ plan: string; months: number; key: string }>(null);
+  const pending = useRef<{ plan: string; months: number; code: string; key: string }>(null);
   useEffect(() => {
     let active = true;
     void client.rpc('manage_manual_subscription', { p_business: business ?? null }).then(result => {
@@ -73,10 +73,11 @@ export function ManualSubscriptions({ client, lang, business }: { client: Supaba
     const fields = new FormData(event.currentTarget);
     const plan = String(fields.get('plan'));
     const months = Number(fields.get('months'));
-    if (pending.current?.plan !== plan || pending.current.months !== months) {
-      pending.current = { plan, months, key: crypto.randomUUID() };
+    const code = String(fields.get('promo') ?? '').trim().toUpperCase();
+    if (pending.current?.plan !== plan || pending.current.months !== months || pending.current.code !== code) {
+      pending.current = { plan, months, code, key: crypto.randomUUID() };
     }
-    void call({ p_action: 'create', p_plan: plan, p_months: months, p_id: pending.current.key }).then(ok => {
+    void call({ p_action: 'create', p_plan: plan, p_months: months, p_id: pending.current.key, p_detail: code || undefined }).then(ok => {
       if (ok) pending.current = null;
     });
   }
@@ -89,6 +90,9 @@ export function ManualSubscriptions({ client, lang, business }: { client: Supaba
       <form onSubmit={create}>
         <label>{t.plan}<select name="plan">{plans.filter(plan => plan.id !== 'FREE').map(plan => <option key={plan.id}>{plan.id}</option>)}</select></label>
         <label>{t.cycle}<select name="months"><option value={1}>{t.month}</option><option value={12}>{t.year}</option></select></label>
+        <label>{({uz:'Promokod (ixtiyoriy)',ru:'Промокод (необязательно)',en:'Promo code (optional)'})[lang]}
+          <input name="promo" maxLength={40} autoComplete="off"/>
+        </label>
         <button disabled={busy}>{t.create}</button>
       </form>
       <p>{t.intro}</p>

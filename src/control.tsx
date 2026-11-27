@@ -5,9 +5,7 @@ import type { Session, SupabaseClient } from '@supabase/supabase-js';
 import { Eye, EyeOff, LogOut, Moon, Sun } from 'lucide-react';
 import { AccountAccess } from './AccountAccess';
 import { Brand } from './AppNavigation';
-import { AIControl } from './AIControl';
-import { SupportDesk } from './SupportDesk';
-import { ManualSubscriptions } from './ManualSubscriptions';
+import { ControlConsole } from './ControlConsole';
 import { languageNames } from './labels';
 import type { Language } from './labels';
 import { connectSupabase } from './supabase';
@@ -42,7 +40,7 @@ function Control({ client }: { client: SupabaseClient | null }) {
     if (!client) return;
     const { data } = client.auth.onAuthStateChange((event, value) => {
       if (event === 'PASSWORD_RECOVERY') setResetSession(true);
-      if (event === 'SIGNED_OUT') setResetSession(false);
+      if (event === 'SIGNED_OUT') { setResetSession(false); setFactor(null); setState('pending'); }
       setSession(value);
     });
     return () => data.subscription.unsubscribe();
@@ -148,9 +146,7 @@ function Control({ client }: { client: SupabaseClient | null }) {
       </form>}
     </section>}
     {status && <p role="alert">{status}</p>}
-    {client && session && !resetSession && state === 'ready' && <SupportDesk client={client} lang={lang} />}
-    {client && session && !resetSession && state === 'ready' && <ManualSubscriptions key={session.user.id} client={client} lang={lang} />}
-    {client && session && !resetSession && state === 'ready' && <AIControl key={session.user.id} client={client} lang={lang} />}
+    {client && session && !resetSession && state === 'ready' && <ControlConsole key={session.user.id} client={client} lang={lang}/>}
   </main>;
 }
 

@@ -284,7 +284,12 @@ function Operations({ client, user, business, store, stores, lang, refresh, prof
   const [expenses, setExpenses] = useState<Expense[]>([]);
   const [shiftSummary, setShiftSummary] = useState<ShiftSummary | null>(null);
   const [billing, setBilling] = useState<Billing | null>(null);
-  const [promoDiscount, setPromoDiscount] = useState<number | null>(null);
+  const [announcements,setAnnouncements]=useState<{id:string;title:string;message:string}[]>([]);
+  useEffect(()=>{
+    let active=true;
+    void client.rpc('platform_announcements').then(result=>{if(active&&!result.error)setAnnouncements(result.data??[]);});
+    return ()=>{active=false;};
+  },[client]);
   const [report, setReport] = useState<Report | null>(null);
   const [previousReport, setPreviousReport] = useState<Report | null>(null);
   const x = extra[lang];
@@ -564,7 +569,7 @@ function Operations({ client, user, business, store, stores, lang, refresh, prof
   }
   return <>
     <AppNavigation {...{ pages, tab, lang, profile, role, online }} go={change}
-      alerts={critical.map(p => p.name + ' · ' + p.quantity).slice(0, 20)} />
+      alerts={[...announcements.map(notice=>notice.title+' · '+notice.message),...critical.map(p => p.name + ' · ' + p.quantity)].slice(0, 20)} />
     {tab !== 0 && <div className="page-heading page-enter"><div><p className="section-caption">{branchName}</p><h1>{pages[tab]}</h1></div></div>}
     {error && <p role="alert">{error}</p>}
     {pending.length > 0 && <p role="status">{t[19]} ({pending.length}) <button disabled={busy || !online} onClick={() => void synchronize()}>{t[20]}</button></p>}
@@ -760,15 +765,6 @@ function Operations({ client, user, business, store, stores, lang, refresh, prof
           {' · '}{Math.max(0,Math.ceil((new Date(billing.trial_until).getTime()-Date.now())/86400000))}
           {' '}{lang === 'ru' ? 'дней trial осталось' : lang === 'uz' ? 'sinov kuni qoldi' : 'trial days remaining'}
         </p>}
-        <form onSubmit={e => void mutate(e, async data => {
-          const result = await client.rpc('redeem_promo', { p_business: business, p_code: data.get('code') });
-          if (!result.error) setPromoDiscount(result.data);
-          return result;
-        })}>
-          <input name="code" required maxLength={40} aria-label={lang === 'ru' ? 'Промокод' : 'Promo kod'} />
-          <button>{t[12]}</button>
-        </form>
-        {promoDiscount !== null && <p role="status">{t[15]} {promoDiscount}%</p>}
         <h3>{lang === 'ru' ? 'История платежей' : lang === 'uz' ? 'To‘lovlar tarixi' : 'Payment history'}</h3>
         {billing.payments.map((payment,i) => <p key={payment.captured_at + i}>
           {new Date(payment.captured_at).toLocaleString(lang)} · {payment.plan} · {payment.provider} · {money(payment.amount_uzs)}
