@@ -264,6 +264,7 @@ function Operations({ client, user, business, store, stores, lang, refresh, prof
   const [revision, reload] = useState(0);
   const [shift, setShift] = useState<Shift | null>(null);
   const [query, setQuery] = useState('');
+  const [catalogPage, setCatalogPage] = useState(0);
   const [barcode, setBarcode] = useState('');
   const [cart, setCart] = useState<Record<string, number>>({});
   const [discount, setDiscount] = useState(0);
@@ -437,6 +438,9 @@ function Operations({ client, user, business, store, stores, lang, refresh, prof
 
   const inventory = new Map(snapshot.stock.map(item => [item.product_id, Number(item.quantity)]));
   const quantity = (id: string) => inventory.get(id) ?? 0;
+  const matchingProducts = snapshot.products.filter(p => (p.name + ' ' + p.barcode).toLowerCase().includes(query.toLowerCase()));
+  const lastCatalogPage = Math.max(0, Math.ceil(matchingProducts.length / 30) - 1);
+  const shownCatalogPage = Math.min(catalogPage, lastCatalogPage);
   const selected = snapshot.products.filter(p => cart[p.id] > 0);
   const lines = selected.map(p => ({ product_id: p.id, quantity: cart[p.id], expected_price: p.price, operator_id: user }));
   let total: number | null = null;
@@ -591,7 +595,7 @@ function Operations({ client, user, business, store, stores, lang, refresh, prof
   const d = dashboardCopy[lang];
   const pages = [...t.slice(0, 6), ...x.slice(0, 3), 'TOVARIX AI', ...management.slice(0, 4), t[28]];
   function change(page: number) {
-    setTab(page); setQuery(''); setScanning(false); setError(''); setContacts([]);
+    setTab(page); setQuery(''); setCatalogPage(0); setScanning(false); setError(''); setContacts([]);
     window.scrollTo(0, 0);
   }
   return <>
@@ -700,7 +704,7 @@ function Operations({ client, user, business, store, stores, lang, refresh, prof
         <button>{t[12]}</button>
       </form>}
       <div className="search-field"><Search size={18} /><input placeholder={t[8] + ' / ' + t[9]} aria-label={t[8] + ' / ' + t[9]} value={query}
-        onChange={e => setQuery(e.target.value)} onKeyDown={e => {
+        onChange={e => { setQuery(e.target.value); setCatalogPage(0); }} onKeyDown={e => {
           if (e.key !== 'Enter' || tab !== 1) return;
           const found = snapshot.products.find(p => p.barcode === query.trim());
           if (found) { add(found.id); setQuery(''); }
@@ -709,7 +713,7 @@ function Operations({ client, user, business, store, stores, lang, refresh, prof
       </div>
       {scanning && <video ref={video} autoPlay muted playsInline />}
       <div className={tab === 1 ? 'pos' : ''}><div>
-        {snapshot.products.filter(p => (p.name + ' ' + p.barcode).toLowerCase().includes(query.toLowerCase())).map(p => <article className={tab === 1 ? 'product-row' : 'inventory-card'} key={p.id}>
+        {matchingProducts.slice(shownCatalogPage * 30, (shownCatalogPage + 1) * 30).map(p => <article className={tab === 1 ? 'product-row' : 'inventory-card'} key={p.id}>
           <span className="product-icon blue"><Package size={20} /></span>
           <div className="product-name"><b>{p.name}</b>{tab === 2 && <small>{attributeKeys.map((key, i) => p.attributes?.[key] ? attributeNames[lang][i] + ': ' + p.attributes[key] : '').filter(Boolean).join(' · ')}</small>}<small>{p.barcode} · {t[13]} {quantity(p.id)}{tab === 3 && quantity(p.id) <= 5 && ' · ' + lifecycle[5]}</small></div><strong>{money(p.price)}</strong>
           {tab === 1 && <button className="icon-button add-product" aria-label={'+' + p.name} disabled={(cart[p.id] || 0) >= (isWeighted(p) ? quantity(p.id) : Math.floor(quantity(p.id)))} onClick={() => add(p.id)}><Plus size={17} /></button>}
@@ -739,6 +743,11 @@ function Operations({ client, user, business, store, stores, lang, refresh, prof
             <button>{x[4]}</button>
           </form>}
         </article>)}
+        {lastCatalogPage > 0 && <div className="controls">
+          <button disabled={!shownCatalogPage} onClick={() => setCatalogPage(shownCatalogPage - 1)} aria-label={({uz:'Oldingi sahifa',ru:'Предыдущая страница',en:'Previous page'})[lang]}>‹</button>
+          <span aria-live="polite">{shownCatalogPage + 1} / {lastCatalogPage + 1}</span>
+          <button disabled={shownCatalogPage === lastCatalogPage} onClick={() => setCatalogPage(shownCatalogPage + 1)} aria-label={({uz:'Keyingi sahifa',ru:'Следующая страница',en:'Next page'})[lang]}>›</button>
+        </div>}
       </div>
       {tab === 1 && <section className="cart-panel"><div className="panel-heading"><div><span className="panel-icon blue"><ShoppingCart size={17} /></span><h2>{t[14]}</h2></div></div>
         {selected.map(p => <div className="cart-line" key={p.id}><span>{p.name}</span>

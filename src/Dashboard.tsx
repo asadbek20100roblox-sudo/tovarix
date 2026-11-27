@@ -27,6 +27,8 @@ export function Dashboard({ data, lang, days, setDays, storeName, money, go, lim
     { icon: Wallet, label: t[1], value: money(data.revenue), tone: 'blue', note: t[22] },
     { icon: ArrowUpRight, label: t[2], value: data.profit === null ? '—' : money(data.profit), tone: 'green', note: t[22] },
     { icon: ReceiptText, label: t[3], value: new Intl.NumberFormat(lang).format(data.count), tone: 'violet', note: t[22] },
+    { icon: ReceiptText, label: ({uz:'O‘rtacha chek',ru:'Средний чек',en:'Average receipt'})[lang],
+      value: data.count ? money(Math.round(data.revenue / data.count)) : '—', tone: 'blue', note: t[22] },
     { icon: Boxes, label: t[4], value: data.inventoryValue === null ? '—' : money(data.inventoryValue), tone: 'amber', note: t[23] },
   ];
   return <div className="dashboard page-enter">
