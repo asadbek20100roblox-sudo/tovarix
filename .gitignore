@@ -6,3 +6,5 @@ dist/
 *.keystore
 
 /supabase/.temp/
+
+/dist-single/

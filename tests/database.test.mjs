@@ -76,6 +76,11 @@ test('tenant isolation, stock atomicity and idempotent checkout', async () => {
     await assert.rejects(db.query("select public.partial_return($1,$2,gen_random_uuid(),$3,0.5,'Excess')", [business, weighedSale, weighted]), /exceeds sold/);
     await assert.rejects(db.query("select public.return_sale($1,$2,'Full')", [business, weighedSale]), /remaining items/);
     await db.query("select public.record_expense($1,$2,200,'Delivery')", [business, store]);
+    const { rows: [{ dashboard }] } = await db.query("select public.dashboard_cash($1,$2,now()-interval '1 day',now()+interval '1 day') as dashboard", [business, store]);
+    assert.equal(dashboard.expenses, 200);
+    assert.equal(dashboard.cash, 2);
+    await db.query("select public.set_staff_display_name($1,$2,'Aziza Demo')", [business, user(3)]);
+    assert.equal((await db.query("select display_name from public.members where user_id=$1", [user(3)])).rows[0].display_name, 'Aziza Demo');
     await db.query('select public.change_shift($1,$2,2,true)', [business, store]);
     const cash = (await db.query('select expected_cash,cash_variance from public.shifts order by opened_at desc limit 1')).rows[0];
     assert.equal(Number(cash.expected_cash), 2);
@@ -99,6 +104,8 @@ test('tenant isolation, stock atomicity and idempotent checkout', async () => {
     assert.deepEqual((await db.query('select id from public.stores')).rows, [{ id: store }]);
     await assert.rejects(db.query('select public.change_shift($1,$2,0,false)', [business, otherStore]), /permission denied/);
     await assert.rejects(db.query('select public.billing_overview($1)', [business]), /permission denied/);
+    await assert.rejects(db.query("select public.set_staff_display_name($1,$2,'Self rename')", [business, user(3)]), /permission denied/);
+    await assert.rejects(db.query("select public.dashboard_cash($1,$2,now()-interval '1 day',now())", [business, store]), /permission denied/);
     assert.equal((await db.query('select count(*)::int as n from public.sales')).rows[0].n, 0);
     await db.exec(login(2));
     assert.deepEqual((await db.query('select * from public.products')).rows, []);

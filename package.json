@@ -1,18 +1,20 @@
 {
   "name": "tovarix",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "private": true,
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "vite build",
+    "build": "npm run build:single && vite build && node scripts/copy-single.mjs",
     "android:add": "cap add android",
     "android:sync": "npm run build && cap sync android",
     "typecheck": "tsc",
     "lint": "eslint src",
     "test": "node --disable-warning=ExperimentalWarning --experimental-strip-types --test tests/*.test.mjs",
     "test:postgres": "node --test tests/integration/postgres.mjs",
-    "test:browser": "node --test tests/integration/browser.mjs"
+    "test:browser": "node --test tests/integration/browser.mjs",
+    "build:single": "vite build --config vite.single.config.ts",
+    "test:single": "node --test tests/integration/single.mjs"
   },
   "dependencies": {
     "@capacitor/android": "^7.0.0",
@@ -22,6 +24,7 @@
     "@zxing/library": "0.23.0",
     "bwip-js": "4.11.4",
     "exceljs": "4.4.0",
+    "lucide-react": "1.82.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0"
   },
@@ -37,7 +40,8 @@
     "playwright": "1.65.1",
     "typescript": "^5.7.0",
     "typescript-eslint": "8.74.0",
-    "vite": "^6.0.0"
+    "vite": "^6.0.0",
+    "vite-plugin-singlefile": "2.3.4"
   },
   "overrides": {
     "exceljs": {

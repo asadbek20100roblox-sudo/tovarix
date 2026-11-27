@@ -6,6 +6,9 @@ import type { Language } from './labels';
 import { internalBarcode, saleTotal } from './commerce';
 import { importLegacySale, listSales, removeSale, saveSale } from './sale-queue';
 import type { QueueEntry } from './sale-queue';
+import { Barcode, CreditCard, LogOut, Moon, Package, Plus, RotateCw, Search, ShoppingCart, Sun, Wallet } from 'lucide-react';
+import { AppNavigation, Brand } from './AppNavigation';
+import { Dashboard, dashboardCopy } from './Dashboard';
 import { HardwareDiagnostics } from './HardwareDiagnostics';
 import { SupportDesk } from './SupportDesk';
 import { plans } from './plans';
@@ -44,7 +47,7 @@ const attributeKeys = ['size','color','batch','expiry','serial','warranty','unit
 const permissions = ['sell','discount','inventory','catalog','stores','analytics','audit','staff','supplier','customer','ai','returns'];
 type Purchase = { id: string; product_id: string; quantity: number; total_uzs: number; reference: string };
 type Contact = Named & { phone: string | null };
-type Staff = { user_id: string; role: string; permissions: string[]; store_scope: string[] | null };
+type Staff = { user_id: string; role: string; permissions: string[]; store_scope: string[] | null; display_name: string | null };
 const empty: Snapshot = { products: [], stock: [], sales: [] };
 const explain = (error: unknown) => error && typeof error === 'object' && 'message' in error
   ? String(error.message) : String(error);
@@ -60,7 +63,7 @@ export function Workspace({ client }: { client: SupabaseClient }) {
     const value = localStorage.getItem('tovarix.language');
     return value === 'ru' || value === 'en' ? value : 'uz';
   });
-  const [dark, setDark] = useState(() => localStorage.getItem('tovarix.theme') !== 'light');
+  const [dark, setDark] = useState(() => localStorage.getItem('tovarix.theme') === 'dark');
   const [status, setStatus] = useState('');
   const t = labels[lang];
   useEffect(() => {
@@ -84,14 +87,14 @@ export function Workspace({ client }: { client: SupabaseClient }) {
     else if (signup && !result.data.session) setStatus(t[37]);
   }
 
-  return <main className={dark ? 'workspace' : 'workspace light'}>
-    <header><div><b>TOVARIX</b><small>BY PIXELFORGE UZ</small></div>
+  return <main className={'workspace ' + (dark ? 'dark' : 'light')}>
+    <header className="brand-strip"><Brand />
       <div className="controls">
         <select aria-label="Language" value={lang} onChange={e => setLang(e.target.value as Language)}>
           {Object.entries(languageNames).map(([id, name]) => <option key={id} value={id}>{name}</option>)}
         </select>
-        <button aria-label={t[38]} aria-pressed={dark} onClick={() => setDark(!dark)}>{dark ? '☀' : '☾'}</button>
-        {session && <button onClick={async () => {
+        <button className="icon-button" aria-label={t[38]} aria-pressed={dark} onClick={() => setDark(!dark)}>{dark ? <Sun size={18} /> : <Moon size={18} />}</button>
+        {session && <button className="icon-button" aria-label={t[23]} onClick={async () => {
           const { error } = await client.auth.signOut({ scope: 'local' });
           if (error) setStatus(error.message);
           else {
@@ -99,33 +102,43 @@ export function Workspace({ client }: { client: SupabaseClient }) {
               if (key.startsWith('tovarix.cache.' + session.user.id + '.')) localStorage.removeItem(key);
             }
           }
-        }}>{t[23]}</button>}
+        }}><LogOut size={17} /></button>}
       </div>
     </header>
     {status && <p role="status">{status}</p>}
     {session === undefined && <div className="loading-skeleton" aria-busy="true" /> }
-    {session === null && <form onSubmit={e => void authenticate(e)}>
+    {session === null && <section className="auth-card page-enter">
+      <div className="auth-title"><Brand /><h1>{t[24]}</h1></div>
+      <form onSubmit={e => void authenticate(e)}>
       <input name="email" type="email" placeholder="Email" aria-label="Email" autoComplete="email" required />
       <input name="password" type="password" placeholder={t[26]} aria-label={t[26]} autoComplete="current-password" minLength={8} required />
-      <button>{t[24]}</button><button value="signup">{t[25]}</button>
-    </form>}
+      <button className="primary-button">{t[24]}</button><button value="signup">{t[25]}</button>
+    </form></section>}
     {session && new URLSearchParams(location.search).get('mode') === 'platform' && <SupportDesk key={session.user.id} client={client} lang={lang} />}
-    {session && new URLSearchParams(location.search).get('mode') !== 'platform' && <BusinessPicker key={session.user.id} client={client} user={session.user.id} lang={lang} />}
+    {session && new URLSearchParams(location.search).get('mode') !== 'platform' && <BusinessPicker key={session.user.id} client={client} user={session.user.id} profile={typeof session.user.user_metadata.full_name === 'string' && session.user.user_metadata.full_name.trim() || session.user.email || session.user.id} lang={lang} />}
   </main>;
 }
 
-function BusinessPicker({ client, user, lang }: { client: SupabaseClient; user: string; lang: Language }) {
-  const [businesses, setBusinesses] = useState<Named[]>(() => load('tovarix.cache.' + user + '.businesses', []));
+function BusinessPicker({ client, user, lang, profile }: { client: SupabaseClient; user: string; lang: Language; profile: string }) {
+  const [businesses, setBusinesses] = useState<(Named & { owner_id?: string })[]>(() => load('tovarix.cache.' + user + '.businesses', []));
   const [business, setBusiness] = useState(() => businesses[0]?.id ?? '');
   const [stores, setStores] = useState<Named[]>(() => load('tovarix.cache.' + user + '.stores.' + business, []));
   const [store, setStore] = useState(() => stores[0]?.id ?? '');
   const [error, setError] = useState('');
   const [revision, refresh] = useState(0);
+  const [membership, setMembership] = useState<{ business: string; role: string; name: string | null } | null>(null);
+  useEffect(() => {
+    if (!business) return;
+    let active = true;
+    void client.from('members').select('role,display_name').eq('business_id', business).eq('user_id', user).maybeSingle()
+      .then(result => { if (active) setMembership(result.data ? { business, role: result.data.role, name: result.data.display_name } : null); });
+    return () => { active = false; };
+  }, [business, client, user]);
   const t = labels[lang];
 
   useEffect(() => {
     let active = true;
-    void client.from('businesses').select('id,name').order('name').then(result => {
+    void client.from('businesses').select('id,name,owner_id').order('name').then(result => {
       if (!active) return;
       if (result.error) setError(result.error.message);
       else {
@@ -161,9 +174,18 @@ function BusinessPicker({ client, user, lang }: { client: SupabaseClient; user: 
     if (!error) { form.reset(); refresh(n => n + 1); }
   }
 
+  const owner = businesses.some(item => item.id === business && item.owner_id === user);
+  const roleKey = owner ? 'owner' : membership?.business === business ? membership.role : null;
+  const roles = {
+    uz: { owner: 'Egasi', cashier: 'Kassir', manager: 'Boshqaruvchi', warehouse: 'Omborchi' },
+    ru: { owner: 'Владелец', cashier: 'Кассир', manager: 'Управляющий', warehouse: 'Кладовщик' },
+    en: { owner: 'Owner', cashier: 'Cashier', manager: 'Manager', warehouse: 'Warehouse' },
+  }[lang];
+  const role = roleKey ? roles[roleKey as keyof typeof roles] : undefined;
+
   return <>
     {error && <p role="alert">{error}</p>}
-    <div className="controls">
+    <div className="controls branch-filters">
       <label>{t[6]} <select value={business} onChange={e => {
         setStore(''); setStores([]); setBusiness(e.target.value);
       }}>
@@ -172,9 +194,9 @@ function BusinessPicker({ client, user, lang }: { client: SupabaseClient; user: 
       <label>{t[7]} <select value={store} onChange={e => setStore(e.target.value)}>
         {stores.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
       </select></label>
-      <button onClick={() => refresh(n => n + 1)}>{t[42]}</button>
+      <button className="icon-button" aria-label={t[42]} onClick={() => refresh(n => n + 1)}><RotateCw size={17} /></button>
     </div>
-    {business && store && <Operations key={business + store} {...{ client, user, business, store, stores, lang, refresh }} />}
+    {business && store && <Operations key={business + store} {...{ client, user, business, store, stores, lang, refresh, profile: membership?.business === business && membership.name || profile, role, owner }} />}
     <details><summary>{t[27]}</summary><form onSubmit={e => void create(e)}>
       <input name="name" aria-label={t[6]} placeholder={t[6]} required maxLength={200} />
       <input name="store" aria-label={t[7]} placeholder={t[7]} required maxLength={200} />
@@ -183,8 +205,9 @@ function BusinessPicker({ client, user, lang }: { client: SupabaseClient; user: 
   </>;
 }
 
-function Operations({ client, user, business, store, stores, lang, refresh }: {
+function Operations({ client, user, business, store, stores, lang, refresh, profile, role, owner }: {
   client: SupabaseClient; user: string; business: string; store: string; stores: Named[];
+  profile: string; role?: string; owner: boolean;
   lang: Language; refresh: (update: (n: number) => number) => void;
 }) {
   const scope = [user, business, store].join('.');
@@ -195,6 +218,8 @@ function Operations({ client, user, business, store, stores, lang, refresh }: {
   const [queueReady, setQueueReady] = useState(false);
   const [online, setOnline] = useState(navigator.onLine);
   const [tab, setTab] = useState(0);
+  const [period, setPeriod] = useState(1);
+  const [cashOverview, setCashOverview] = useState<{ expenses: number; cash: number | null } | null>(null);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
   const sending = useRef(false);
@@ -318,7 +343,7 @@ function Operations({ client, user, business, store, stores, lang, refresh }: {
         if (active) setBilling(result.data);
       });
     }
-    if (tab === 11 || tab === 12) {
+    if (tab === 11 || tab === 12 || (tab === 8 && owner)) {
       const date = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Tashkent', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
       const today = new Date(date + 'T12:00:00Z');
       const day = (offset: number) => new Date(today.getTime() + offset * 86400000).toISOString().slice(0, 10);
@@ -338,11 +363,11 @@ function Operations({ client, user, business, store, stores, lang, refresh }: {
         .order('created_at', { ascending: false }).limit(20).then(result => { if (active) setAiHistory(result.data ?? []); });
     }
     if (tab === 8) {
-      void client.from('members').select('user_id,role,permissions,store_scope').eq('business_id', business)
+      void client.from('members').select('user_id,role,permissions,store_scope,display_name').eq('business_id', business)
         .then(result => { if (active) { setStaff(result.data ?? []); if (result.error) setError(result.error.message); } });
     }
     return () => { active = false; };
-  }, [tab, business, store, client, revision, user]);
+  }, [tab, business, store, client, revision, user, owner]);
 
   async function makeLabel(product: Product) {
     try {
@@ -354,7 +379,22 @@ function Operations({ client, user, business, store, stores, lang, refresh }: {
     } catch (err) { setError(explain(err)); }
   }
 
-  const quantity = (id: string) => Number(snapshot.stock.find(s => s.product_id === id)?.quantity ?? 0);
+  useEffect(() => {
+    if (tab !== 0 || !owner) return;
+    let active = true;
+    setCashOverview(null);
+    const start = new Date();
+    start.setHours(0, 0, 0, 0);
+    const end = new Date(start);
+    end.setDate(end.getDate() + 1);
+    start.setDate(start.getDate() - period + 1);
+    void client.rpc('dashboard_cash', { p_business: business, p_store: store, p_from: start.toISOString(), p_until: end.toISOString() })
+      .then(result => { if (active && !result.error) setCashOverview(result.data); });
+    return () => { active = false; };
+  }, [tab, owner, period, business, store, client, revision]);
+
+  const inventory = new Map(snapshot.stock.map(item => [item.product_id, Number(item.quantity)]));
+  const quantity = (id: string) => inventory.get(id) ?? 0;
   const selected = snapshot.products.filter(p => cart[p.id] > 0);
   const lines = selected.map(p => ({ product_id: p.id, quantity: cart[p.id], expected_price: p.price, operator_id: user }));
   let total: number | null = null;
@@ -365,15 +405,20 @@ function Operations({ client, user, business, store, stores, lang, refresh }: {
     total: s.total - (s.partial_returns ?? []).reduce((sum, returned) => sum + returned.total, 0),
     cost: s.cost - (s.partial_returns ?? []).reduce((sum, returned) => sum + returned.cost, 0),
   }));
-  const daily = Array.from({ length: 7 }, (_, index) => {
+  const branchName = stores.find(item => item.id === store)?.name ?? t[7];
+  const critical = snapshot.products.filter(p => quantity(p.id) <= 5).map(p => ({ id: p.id, name: p.name, quantity: quantity(p.id) }));
+  const periodStart = new Date();
+  periodStart.setHours(0, 0, 0, 0);
+  periodStart.setDate(periodStart.getDate() - period + 1);
+  const periodSales = sales.filter(s => new Date(s.created_at) >= periodStart);
+  const daily = Array.from({ length: period === 1 ? 7 : period }, (_, index) => {
     const day = new Date();
     day.setHours(0, 0, 0, 0);
-    day.setDate(day.getDate() + index - 6);
+    day.setDate(day.getDate() + index - (period === 1 ? 7 : period) + 1);
     const end = new Date(day);
     end.setDate(end.getDate() + 1);
     return { date: day, value: sales.filter(s => new Date(s.created_at) >= day && new Date(s.created_at) < end).reduce((sum, s) => sum + s.total, 0) };
   });
-  const ceiling = Math.max(1, ...daily.map(d => d.value));
 
   const isWeighted = (p: Product) => p.attributes?.unit?.trim().toLowerCase() === 'kg';
   function add(id: string) {
@@ -502,13 +547,17 @@ function Operations({ client, user, business, store, stores, lang, refresh }: {
     finally { setBusy(false); }
   }
 
+  const d = dashboardCopy[lang];
+  const pages = [...t.slice(0, 6), ...x.slice(0, 3), 'TOVARIX AI', ...management.slice(0, 4), t[28]];
+  function change(page: number) {
+    setTab(page); setQuery(''); setScanning(false); setError(''); setContacts([]);
+    window.scrollTo(0, 0);
+  }
   return <>
-    <nav className="workspace-nav" aria-label="TOVARIX">{[...t.slice(0, 6), ...x.slice(0, 3), 'TOVARIX AI', ...management.slice(0, 4)].map((label, i) => <button key={i} aria-current={tab === i ? 'page' : undefined} className={tab === i ? 'active' : ''} onClick={() => {
-      setTab(i); setQuery(''); setScanning(false); setError(''); setContacts([]);
-    }}>{label}</button>)}</nav>
-    <h1>{tab < 6 ? t[tab] : tab < 9 ? x[tab - 6] : tab === 9 ? 'TOVARIX AI' : management[tab - 10]}</h1>
+    <AppNavigation {...{ pages, tab, lang, profile, role, online }} go={change}
+      alerts={critical.map(p => p.name + ' · ' + p.quantity).slice(0, 20)} />
+    {tab !== 0 && <div className="page-heading page-enter"><div><p className="section-caption">{branchName}</p><h1>{pages[tab]}</h1></div></div>}
     {error && <p role="alert">{error}</p>}
-    <p className="connection" role="status">{queueText[online ? 3 : 4]}</p>
     {pending.length > 0 && <p role="status">{t[19]} ({pending.length}) <button disabled={busy || !online} onClick={() => void synchronize()}>{t[20]}</button></p>}
     {history.length > 0 && <details><summary>{queueText[0]}</summary>
       {history.map(entry => <article key={entry.request.p_request}>
@@ -517,14 +566,16 @@ function Operations({ client, user, business, store, stores, lang, refresh }: {
         {entry.reason && <span>{entry.reason}</span>}
       </article>)}
     </details>}
-    {tab === 0 && <>
-      <div className="grid">{[[t[28], sales.length], [t[29], money(sales.reduce((sum, s) => sum + s.total, 0))],
-        [t[30], money(sales.reduce((sum, s) => sum + s.total - s.cost, 0))]].map(([label, value]) =>
-        <article key={label}><small>{label} · ≤250</small><strong>{value}</strong></article>)}</div>
-      <section className="chart" aria-label={t[29]}>{daily.map(({ date, value }) => <div key={date.toISOString()}>
-        <small>{money(value)}</small><progress max={ceiling} value={value} aria-label={date.toLocaleDateString(lang)} />
-        <small>{date.toLocaleDateString(lang, { weekday: 'short' })}</small>
-      </div>)}</section>
+    {tab === 0 && <Dashboard lang={lang} days={period} setDays={setPeriod} storeName={branchName} money={money} go={change}
+      limited={true} data={{
+        revenue: periodSales.reduce((sum, s) => sum + s.total, 0),
+        profit: periodSales.reduce((sum, s) => sum + s.total - s.cost, 0),
+        count: periodSales.length,
+        inventoryValue: snapshot.products.reduce((sum, p) => sum + Number(p.cost) * quantity(p.id), 0),
+        openingCash: shift ? Number(shift.opening_cash) : null, expenses: cashOverview?.expenses ?? null, currentCash: cashOverview?.cash, critical, days: daily,
+        recent: snapshot.sales.slice(0, 4).map(s => ({ id: s.id, date: s.created_at, total: s.total, title: s.sale_returns ? d[24] : d[17], returned: !!s.sale_returns })),
+      }} />}
+    {tab === 14 && <div className="page-enter">
       {snapshot.sales.map(s => <article key={s.id}><span>{new Date(s.created_at).toLocaleString(lang)} · {money(s.total)}
         {s.sale_returns && ' · ' + lifecycle[4]}</span>
         <button onClick={() => { setLabel(null); setReceipt(s); }}>{t[21]}</button>
@@ -565,7 +616,7 @@ function Operations({ client, user, business, store, stores, lang, refresh }: {
           </form>
         </details>}
       </article>)}
-    </>}
+    </div>}
     {(tab === 1 || tab === 2 || tab === 3) && <>
       {tab === 1 && <form onSubmit={e => void mutate(e, data => client.rpc('change_shift', {
         p_business: business, p_store: store, p_cash: Number(data.get('cash')), p_close: !!shift,
@@ -607,19 +658,20 @@ function Operations({ client, user, business, store, stores, lang, refresh }: {
         )}</div></details>
         <button>{t[12]}</button>
       </form>}
-      <div className="controls"><input placeholder={t[8] + ' / ' + t[9]} aria-label={t[8] + ' / ' + t[9]} value={query}
+      <div className="search-field"><Search size={18} /><input placeholder={t[8] + ' / ' + t[9]} aria-label={t[8] + ' / ' + t[9]} value={query}
         onChange={e => setQuery(e.target.value)} onKeyDown={e => {
           if (e.key !== 'Enter' || tab !== 1) return;
           const found = snapshot.products.find(p => p.barcode === query.trim());
           if (found) { add(found.id); setQuery(''); }
         }} />
-        {tab === 1 && <button onClick={() => setScanning(!scanning)} aria-pressed={scanning}>{t[31]}</button>}
+        {tab === 1 && <button onClick={() => setScanning(!scanning)} aria-pressed={scanning}><Barcode size={19} />{t[31]}</button>}
       </div>
       {scanning && <video ref={video} autoPlay muted playsInline />}
       <div className={tab === 1 ? 'pos' : ''}><div>
-        {snapshot.products.filter(p => (p.name + ' ' + p.barcode).toLowerCase().includes(query.toLowerCase())).map(p => <article key={p.id}>
-          <b>{p.name}</b>{tab === 2 && <small>{attributeKeys.map((key, i) => p.attributes?.[key] ? attributeNames[lang][i] + ': ' + p.attributes[key] : '').filter(Boolean).join(' · ')}</small>}<small>{p.barcode} · {t[13]} {quantity(p.id)}{tab === 3 && quantity(p.id) <= 5 && ' · ' + lifecycle[5]}</small><span>{money(p.price)}</span>
-          {tab === 1 && <button aria-label={'+' + p.name} disabled={(cart[p.id] || 0) >= (isWeighted(p) ? quantity(p.id) : Math.floor(quantity(p.id)))} onClick={() => add(p.id)}>+</button>}
+        {snapshot.products.filter(p => (p.name + ' ' + p.barcode).toLowerCase().includes(query.toLowerCase())).map(p => <article className={tab === 1 ? 'product-row' : 'inventory-card'} key={p.id}>
+          <span className="product-icon blue"><Package size={20} /></span>
+          <div className="product-name"><b>{p.name}</b>{tab === 2 && <small>{attributeKeys.map((key, i) => p.attributes?.[key] ? attributeNames[lang][i] + ': ' + p.attributes[key] : '').filter(Boolean).join(' · ')}</small>}<small>{p.barcode} · {t[13]} {quantity(p.id)}{tab === 3 && quantity(p.id) <= 5 && ' · ' + lifecycle[5]}</small></div><strong>{money(p.price)}</strong>
+          {tab === 1 && <button className="icon-button add-product" aria-label={'+' + p.name} disabled={(cart[p.id] || 0) >= (isWeighted(p) ? quantity(p.id) : Math.floor(quantity(p.id)))} onClick={() => add(p.id)}><Plus size={17} /></button>}
           {tab === 2 && <button onClick={() => void makeLabel(p)}>{t[41]}</button>}
           {tab === 3 && <form onSubmit={e => void mutate(e, data => client.rpc('adjust_stock', {
             p_business: business, p_store: store, p_product: p.id, p_delta: Number(data.get('delta')), p_reason: data.get('reason'),
@@ -647,18 +699,25 @@ function Operations({ client, user, business, store, stores, lang, refresh }: {
           </form>}
         </article>)}
       </div>
-      {tab === 1 && <section><h2>{t[14]}</h2>
-        {selected.map(p => <div className="controls" key={p.id}>{p.name} × {isWeighted(p)
-          ? <input aria-label={p.name + ' · kg'} type="number" min="0.001" max={quantity(p.id)} step="0.001"
-            value={cart[p.id]} onChange={e => setCart(old => ({ ...old, [p.id]: Math.min(quantity(p.id), Number(e.target.value)) }))} />
-          : cart[p.id]}
-          <button onClick={() => setCart(old => ({ ...old, [p.id]: Math.max(0, Math.round((old[p.id] - 1) * 1000) / 1000) }))}>−</button></div>)}
+      {tab === 1 && <section className="cart-panel"><div className="panel-heading"><div><span className="panel-icon blue"><ShoppingCart size={17} /></span><h2>{t[14]}</h2></div></div>
+        {selected.map(p => <div className="cart-line" key={p.id}><span>{p.name}</span>
+          <input aria-label={p.name + ' · ' + x[5]} type="number" min="0" max={quantity(p.id)} step={isWeighted(p) ? '0.001' : '1'}
+            value={cart[p.id]} onChange={e => {
+              const requested = Number(e.target.value);
+              const value = isWeighted(p) ? Math.round(requested * 1000) / 1000 : Math.trunc(requested);
+              setCart(old => ({ ...old, [p.id]: Math.max(0, Math.min(isWeighted(p) ? quantity(p.id) : Math.floor(quantity(p.id)), value)) }));
+            }} /></div>)}
+        <div className="payment-choice">
+          <button type="button" aria-pressed={card === 0} onClick={() => setCard(0)}><Wallet size={16} />{t[16]}</button>
+          <button type="button" aria-pressed={total !== null && total > 0 && card === total}
+            disabled={!total} onClick={() => setCard(total ?? 0)}><CreditCard size={16} />{lang === 'ru' ? 'Карта' : lang === 'uz' ? 'Karta' : 'Card'}</button>
+        </div>
         <label>{t[15]} <input type="number" min="0" value={discount} onChange={e => setDiscount(Number(e.target.value))} /></label>
         <label>{t[17]} <input type="number" min="0" value={card} onChange={e => setCard(Number(e.target.value))} /></label>
         {total !== null && card <= total && <p>{t[16]} · {money(total - card)}</p>}
         {total !== null && <h2>{money(total)}</h2>}
         <button disabled={busy || !queueReady || !lines.length || total === null || !Number.isSafeInteger(card) || card < 0 || card > total}
-          onClick={() => void submit()}>{t[18]}</button>
+          className="primary-button block" onClick={() => void submit()}>{t[18]}</button>
       </section>}</div>
     </>}
     {tab === 4 && <form onSubmit={e => void mutate(e, async data => {
@@ -720,8 +779,23 @@ function Operations({ client, user, business, store, stores, lang, refresh }: {
         </label>)}</fieldset>
         <button>{t[12]}</button><button value="remove">{x[8]}</button>
       </form>
-      {staff.map(member => <article key={member.user_id}><strong>{member.user_id}</strong>
-        <span>{member.role} · {member.permissions.join(', ')}</span>
+      {staff.map(member => <article className="staff-card" key={member.user_id}>
+        <div className="staff-identity"><span className="staff-avatar blue">{(member.display_name?.split(/\s+/).slice(0, 2).map(part => part[0]).join('') || member.user_id.slice(0, 2)).toUpperCase()}</span>
+          <div><strong>{member.display_name || member.user_id.slice(0, 8)}</strong><small>{member.role}</small></div></div>
+        <small title={member.user_id}>{member.user_id}</small>
+        {owner && report && <div className="staff-metrics">
+          <div><small>{t[28]}</small><strong>{report.operators.find(item => item.operator_id === member.user_id)?.sales ?? 0}</strong></div>
+          <div><small>{t[29]}</small><strong>{money(report.operators.find(item => item.operator_id === member.user_id)?.revenue ?? 0)}</strong></div>
+        </div>}
+        <details><summary>{x[7]}</summary><p>{member.permissions.join(', ')}</p></details>
+        {owner && <details><summary>{lang === 'ru' ? 'Управление аккаунтом' : lang === 'uz' ? 'Hisob boshqaruvi' : 'Manage account'}</summary>
+          <form onSubmit={e => void mutate(e, data => client.rpc('set_staff_display_name', {
+            p_business: business, p_user: member.user_id, p_name: data.get('displayName'),
+          }))}>
+            <input name="displayName" defaultValue={member.display_name ?? ''} maxLength={100} aria-label={t[8]} />
+            <button>{t[12]}</button>
+          </form>
+        </details>}
         <details><summary>{operationsText[2]}</summary>
           <form key={JSON.stringify(member.store_scope)} onSubmit={e => void mutate(e, data => client.rpc('set_store_scope', {
             p_business: business, p_user: member.user_id, p_stores: data.has('all') ? null : data.getAll('branches'),

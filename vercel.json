@@ -3,6 +3,19 @@
   "outputDirectory": "dist",
   "headers": [
     {
+      "source": "/downloads/TOVARIX.html",
+      "headers": [
+        {
+          "key": "Content-Disposition",
+          "value": "attachment; filename=\"TOVARIX.html\""
+        },
+        {
+          "key": "Content-Type",
+          "value": "text/html; charset=utf-8"
+        }
+      ]
+    },
+    {
       "source": "/sw.js",
       "headers": [
         {
