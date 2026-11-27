@@ -12,7 +12,7 @@ export default defineConfig({
         source: `
           const namespace = 'tovarix-shell-';
           const cache = namespace + ${JSON.stringify(version)};
-          const assets = ${JSON.stringify(['/', '/manifest.webmanifest', '/icon-192.png', '/icon-512.png', ...assets.map(name => '/' + name)])};
+          const assets = ${JSON.stringify(['/', '/tovarix-config.json', '/manifest.webmanifest', '/icon-192.png', '/icon-512.png', ...assets.map(name => '/' + name)])};
           self.addEventListener('install', event => event.waitUntil(caches.open(cache).then(store => store.addAll(assets))));
           self.addEventListener('activate', event => event.waitUntil(
             caches.keys().then(keys => Promise.all(keys.filter(key => key.startsWith(namespace) && key !== cache).map(key => caches.delete(key))))
@@ -20,7 +20,12 @@ export default defineConfig({
           self.addEventListener('fetch', event => {
             const url = new URL(event.request.url);
             if (url.origin !== location.origin || event.request.method !== 'GET') return;
-            if (event.request.mode === 'navigate') {
+            if (url.pathname === '/tovarix-config.json') {
+              event.respondWith(fetch(event.request).then(async response => {
+                if (response.ok) await (await caches.open(cache)).put(event.request, response.clone());
+                return response;
+              }).catch(() => caches.open(cache).then(store => store.match(event.request))));
+            } else if (event.request.mode === 'navigate') {
               event.respondWith(fetch(event.request).catch(() => caches.open(cache).then(store => store.match('/'))));
             } else if (assets.includes(url.pathname)) {
               event.respondWith(caches.open(cache).then(store => store.match(event.request)).then(res => res || fetch(event.request)));
