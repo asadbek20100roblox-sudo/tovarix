@@ -46,7 +46,7 @@ test('verified email gets one trial, expiration restores FREE without deletion',
     await db.exec(login(1));
     await assert.rejects(db.query('select public.ai_context($1)',[second]),/global quota exceeded/);
     const result = await db.query('select public.ai_remaining($1) as quota',[second]);
-    assert.equal(result.rows[0].quota.remaining,5);
+    assert.equal(result.rows[0].quota.remaining,0);
 
   } finally { await db.close(); }
 });

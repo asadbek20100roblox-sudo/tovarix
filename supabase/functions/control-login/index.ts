@@ -2,9 +2,10 @@ import { createClient } from 'npm:@supabase/supabase-js@2';
 
 Deno.serve(async request => {
   const origin = request.headers.get('Origin');
-  const allowed = (Deno.env.get('TOVARIX_ALLOWED_ORIGINS') ?? '').split(',').map(value => value.trim());
+  const allowed = new Set(['https://tovarix-control.vercel.app',
+    ...(Deno.env.get('TOVARIX_ALLOWED_ORIGINS') ?? '').split(',').map(value => value.trim())]);
   const headers = new Headers({ 'Cache-Control': 'no-store', 'Vary': 'Origin' });
-  if (origin && !allowed.includes(origin)) return new Response(null, { status: 403, headers });
+  if (origin && !allowed.has(origin)) return new Response(null, { status: 403, headers });
   if (origin) {
     headers.set('Access-Control-Allow-Origin', origin);
     headers.set('Access-Control-Allow-Headers', 'authorization, apikey, content-type, x-client-info');

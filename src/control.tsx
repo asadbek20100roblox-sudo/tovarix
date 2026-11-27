@@ -3,7 +3,9 @@ import type { FormEvent } from 'react';
 import { createRoot } from 'react-dom/client';
 import type { Session, SupabaseClient } from '@supabase/supabase-js';
 import { Eye, EyeOff, LogOut, Moon, Sun } from 'lucide-react';
+import { AccountAccess } from './AccountAccess';
 import { Brand } from './AppNavigation';
+import { AIControl } from './AIControl';
 import { SupportDesk } from './SupportDesk';
 import { ManualSubscriptions } from './ManualSubscriptions';
 import { languageNames } from './labels';
@@ -35,14 +37,19 @@ function Control({ client }: { client: SupabaseClient | null }) {
   const a = accessCopy[lang];
   const [showPassword, setShowPassword] = useState(false);
   const [recovering, setRecovering] = useState(false);
+  const [resetSession, setResetSession] = useState(false);
   useEffect(() => {
     if (!client) return;
-    const { data } = client.auth.onAuthStateChange((_event, value) => setSession(value));
+    const { data } = client.auth.onAuthStateChange((event, value) => {
+      if (event === 'PASSWORD_RECOVERY') setResetSession(true);
+      if (event === 'SIGNED_OUT') setResetSession(false);
+      setSession(value);
+    });
     return () => data.subscription.unsubscribe();
   }, [client]);
   useEffect(() => { document.documentElement.lang = lang; }, [lang]);
   useEffect(() => {
-    if (!client || !session) return;
+    if (!client || !session || resetSession) return;
     let active = true;
     setState('pending');
     void (async () => {
@@ -59,7 +66,7 @@ function Control({ client }: { client: SupabaseClient | null }) {
       setState('mfa');
     })().catch(() => { if (active) setState('closed'); });
     return () => { active = false; };
-  }, [client, session]);
+  }, [client, resetSession, session]);
 
   async function run(action: () => PromiseLike<{ error: { message: string } | null }>) {
     if (busy) return;
@@ -90,7 +97,7 @@ function Control({ client }: { client: SupabaseClient | null }) {
       <select aria-label="Language" value={lang} onChange={e => setLang(e.target.value as Language)}>
         {Object.entries(languageNames).map(([code,name]) => <option key={code} value={code}>{name}</option>)}
       </select><button className="icon-button" aria-label={t[8]} aria-pressed={dark} onClick={() => setDark(!dark)}>{dark ? <Sun size={18} /> : <Moon size={18} />}</button>
-      {session && <button className="icon-button" aria-label={t[7]} onClick={() => void run(() => client!.auth.signOut({ scope:'local' }))}><LogOut size={17} /></button>}
+      {session && <button className="icon-button" aria-label={t[7]} onClick={() => void run(() => client!.auth.signOut({ scope:'global' }))}><LogOut size={17} /></button>}
     </div></header>
     <div className="page-heading"><h1>TOVARIX CONTROL</h1></div>
     {(!client || (session && state === 'closed')) && <p role="status">{t[6]}</p>}
@@ -100,7 +107,8 @@ function Control({ client }: { client: SupabaseClient | null }) {
         event.preventDefault();
         const email = String(new FormData(event.currentTarget).get('email')).trim();
         void run(async () => {
-          await client.auth.resetPasswordForEmail(email);
+          const redirectTo = new URL(location.pathname,location.origin).href;
+          await client.auth.resetPasswordForEmail(email,{redirectTo});
           setStatus(a[4]);
           return { error: null };
         });
@@ -118,7 +126,9 @@ function Control({ client }: { client: SupabaseClient | null }) {
       </form>}
       <button type="button" onClick={() => { setRecovering(value => !value); setStatus(''); }}>{recovering ? t[2] : a[3]}</button>
     </section>}
-    {client && session && state === 'mfa' && <section className="auth-card">
+    {client && session && resetSession && <AccountAccess client={client} lang={lang} recovery
+      finishRecovery={() => void run(async () => client.auth.signOut({ scope: 'global' }))}/>}
+    {client && session && !resetSession && state === 'mfa' && <section className="auth-card">
       {!factor && <button disabled={busy} onClick={() => void run(async () => {
         const result = await client.auth.mfa.enroll({ factorType:'totp', friendlyName:'TOVARIX CONTROL' });
         if (result.data) setFactor({ id:result.data.id, qrCode:result.data.totp.qr_code });
@@ -138,8 +148,9 @@ function Control({ client }: { client: SupabaseClient | null }) {
       </form>}
     </section>}
     {status && <p role="alert">{status}</p>}
-    {client && session && state === 'ready' && <SupportDesk client={client} lang={lang} />}
-    {client && session && state === 'ready' && <ManualSubscriptions key={session.user.id} client={client} lang={lang} />}
+    {client && session && !resetSession && state === 'ready' && <SupportDesk client={client} lang={lang} />}
+    {client && session && !resetSession && state === 'ready' && <ManualSubscriptions key={session.user.id} client={client} lang={lang} />}
+    {client && session && !resetSession && state === 'ready' && <AIControl key={session.user.id} client={client} lang={lang} />}
   </main>;
 }
 

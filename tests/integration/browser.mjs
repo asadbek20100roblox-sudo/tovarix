@@ -58,6 +58,27 @@ test('mobile Supabase checkout, persisted offline request, and real retry', { ti
     await debt.getByLabel('Amount').fill('400');
     await debt.getByRole('button', { name: 'Record repayment' }).click();
     await page.getByRole('button', { name: /Synthetic Buyer.*600/ }).waitFor();
+    await page.route('**/rest/v1/rpc/ai_remaining', route => route.fulfill({ json:{ enabled:true,remaining:2 } }));
+    await page.route('**/functions/v1/tovarix-ai', route => route.fulfill({
+      contentType: 'text/event-stream',
+      body: 'data: '+JSON.stringify({delta:'Synthetic reply'})+'\n\ndata: '+JSON.stringify({
+        done:{id:'00000000-0000-0000-0000-000000000001',answer:'| Value |\n|---|\n| Synthetic total |',chart:[{day:'2026-11-20',revenue:150,gross_profit:null}]},
+      })+'\n\n',
+    }));
+    await menuTab('TOVARIX AI');
+    await page.getByRole('heading', {name:'Let’s grow your business together.'}).waitFor();
+    await page.getByRole('button', {name:'Analyze today’s sales'}).click();
+    await page.getByRole('button', {name:'Send',exact:true}).click();
+    await page.getByRole('cell',{name:'Synthetic total'}).waitFor();
+    await screenshot('ai-chat');
+    page.once('dialog',dialog=>void dialog.accept('Weekly report'));
+    await page.getByRole('button',{name:'Rename chat'}).click();
+    await page.getByRole('button',{name:'Chat history'}).click();
+    await page.getByRole('button',{name:'Weekly report',exact:true}).waitFor();
+    await page.getByRole('dialog',{name:'Chat history'}).getByRole('button',{name:'Cancel',exact:true}).click();
+    page.once('dialog',dialog=>void dialog.accept());
+    await page.getByRole('button',{name:'Delete chat'}).click();
+    await page.getByRole('heading', {name:'Let’s grow your business together.'}).waitFor();
     await menuTab('Settings');
     const subscriptions = page.locator('section').filter({ has: page.getByRole('heading', { name: 'Subscription requests' }) });
     await subscriptions.getByRole('button', { name: 'Submit request' }).click();

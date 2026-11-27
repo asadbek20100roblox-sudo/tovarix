@@ -291,3 +291,34 @@ button:active:not(:disabled) { transform: scale(.98); }
 .debt-history { padding: 0; list-style: none; display: grid; gap: 8px; }
 .debt-history li { display: grid; grid-template-columns: auto minmax(0,1fr) auto; gap: 8px; align-items: center; }
 @media (max-width: 600px) { .debt-sheet { inset: auto 0 0; margin: auto auto 0; max-width: 100%; border-radius: 22px 22px 0 0; } }
+
+.ai-chat { max-width: 920px; margin-inline: auto; display: grid; gap: 1rem; min-width: 0; }
+.ai-chat-header { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: .65rem; }
+.ai-brand { display: flex; align-items: center; gap: .75rem; }
+.ai-brand > svg { color: #8053dd; }
+.ai-brand h2 { margin: 0; }
+.ai-quota { flex-basis: 100%; }
+.ai-welcome { padding: clamp(1rem, 4vw, 2.2rem); background: color-mix(in srgb, var(--surface) 92%, #9b7cf4); border-radius: 22px; }
+.ai-welcome h3 { font-size: clamp(1.3rem, 4vw, 2rem); }
+.ai-prompts { display: flex; flex-wrap: wrap; gap: .45rem; }
+.ai-turn { display: grid; min-width: 0; gap: .4rem; animation: page-in 240ms cubic-bezier(.22,1,.36,1); }
+.ai-user-message { justify-self: end; margin: 0; max-width: 88%; overflow-wrap: anywhere; padding: .65rem .9rem; border-radius: 16px; background: color-mix(in srgb, var(--surface) 83%, #7b8df4); }
+.ai-reply { display: block; overflow: auto; overflow-wrap: anywhere; }
+.ai-reply table { border-collapse: collapse; min-width: min-content; }
+.ai-reply th, .ai-reply td { padding: .45rem; text-align: start; border-bottom: 1px solid currentColor; }
+.ai-reply pre { overflow: auto; }
+.ai-draft { white-space: pre-wrap; }
+.ai-generating { color: var(--muted); animation: ai-pulse 1.1s ease-in-out infinite alternate; }
+@keyframes ai-pulse { to { opacity: .55; } }
+.ai-compose { display: grid; gap: .4rem; min-width: 0; padding: .75rem; border-radius: 18px; background: var(--surface); }
+.ai-compose textarea { resize: vertical; min-width: 0; color: inherit; background: transparent; padding: .55rem; border: 1px solid var(--border); border-radius: 12px; }
+.ai-compose .controls { justify-content: space-between; }
+.ai-compose label.icon-button { position: relative; cursor: pointer; display: inline-grid; place-items: center; }
+.ai-file { position: absolute; inset: 0; width: 100%; opacity: 0; cursor: pointer; }
+.ai-compose label:focus-within { outline: 2px solid currentColor; outline-offset: 2px; }
+.ai-chart { display: flex; align-items: stretch; gap: 3px; height: 6rem; padding-block: .3rem; }
+.ai-chart button { flex: 1; display: flex; align-items: end; min-width: 0; min-height: 0; padding: 0; background: transparent; border: 0; }
+.ai-chart span { width: 100%; border-radius: 6px 6px 0 0; background: #835ce0; }
+.ai-chart [aria-pressed=true] span { background: #397ef0; }
+.ai-proposal { border-inline-start: 3px solid #835ce0; }
+@media (prefers-reduced-motion: reduce) { .ai-turn, .ai-generating { animation: none; } }

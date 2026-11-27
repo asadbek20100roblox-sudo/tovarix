@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react';
 import type { FormEvent } from 'react';
 import type { Session, SupabaseClient } from '@supabase/supabase-js';
 import { labels, languageNames } from './labels';
@@ -15,6 +15,8 @@ import { HardwareDiagnostics } from './HardwareDiagnostics';
 import { SupportDesk } from './SupportDesk';
 import { plans } from './plans';
 import { ManualSubscriptions } from './ManualSubscriptions';
+
+const AIChat = lazy(() => import('./AIChat').then(module => ({ default: module.AIChat })));
 
 type Named = { id: string; name: string };
 type Product = Named & { barcode: string; price: number; cost: number | null; attributes: Record<string, string> };
@@ -298,41 +300,6 @@ function Operations({ client, user, business, store, stores, lang, refresh, prof
     en: ['Purchases','Analytics','Finance','Support','Document reference','Purchase amount','No supplier','Sales by product','Margin','Last 7 days','Previous 7 days','For support, contact the business owner or your PixelForge UZ representative.'],
   }[lang];
   const t = labels[lang];
-  const [aiQuota, setAiQuota] = useState<{ enabled: boolean; remaining: number } | null>(null);
-  const [aiHistory, setAiHistory] = useState<{ id: string; question: string; answer: string }[]>([]);
-  const [answer, setAnswer] = useState('');
-  const [asking, setAsking] = useState(false);
-  async function ask(e: FormEvent<HTMLFormElement>) {
-    e.preventDefault();
-    const values = new FormData(e.currentTarget);
-    setAsking(true);
-    setError('');
-    setAnswer('');
-    try {
-      const file = values.get('photo');
-      let image: { mimeType: string; data: string } | undefined;
-      if (file instanceof File && file.size > 0) {
-        if (file.size > 1_400_000 || !['image/jpeg', 'image/png', 'image/webp'].includes(file.type)) {
-          throw new Error(lang === 'ru' ? 'Выберите JPEG, PNG или WebP до 1,4 МБ'
-            : lang === 'en' ? 'Choose a JPEG, PNG, or WebP up to 1.4 MB' : '1,4 MB gacha JPEG, PNG yoki WebP tanlang');
-        }
-        const encoded = await new Promise<string>((resolve, reject) => {
-          const reader = new FileReader();
-          reader.onload = () => resolve(String(reader.result).split(',')[1]);
-          reader.onerror = () => reject(reader.error);
-          reader.readAsDataURL(file);
-        });
-        image = { mimeType: file.type, data: encoded };
-      }
-      const { data, error } = await client.functions.invoke('tovarix-ai', {
-        body: { business, question: String(values.get('question')), image },
-      });
-      if (error) throw error;
-      setAnswer(data.answer);
-      reload(n => n + 1);
-    } catch (err) { setError(explain(err)); }
-    finally { setAsking(false); }
-  }
   const money = (value: number | null) => value === null ? '—' : new Intl.NumberFormat(lang, { style: 'currency', currency: 'UZS', maximumFractionDigits: 0 }).format(value);
 
   useEffect(() => {
@@ -401,11 +368,6 @@ function Operations({ client, user, business, store, stores, lang, refresh, prof
         const error = current.error ?? previous.error;
         if (error) setError(error.message);
       });
-    }
-    if (tab === 9) {
-      void client.rpc('ai_remaining', { p_business: business }).then(result => { if (active) setAiQuota(result.data); });
-      void client.from('ai_history').select('id,question,answer').eq('business_id', business).eq('user_id', user)
-        .order('created_at', { ascending: false }).limit(20).then(result => { if (active) setAiHistory(result.data ?? []); });
     }
     if (tab === 8) {
       void client.from('members').select('user_id,role,permissions,store_scope,display_name,blocked_at').eq('business_id', business)
@@ -878,21 +840,9 @@ function Operations({ client, user, business, store, stores, lang, refresh, prof
           </form>
         </details></article>)}
     </>}
-    {tab === 9 && <>
-      {aiQuota && <p className="section-caption">{aiQuota.enabled
-        ? ({uz:'Bugungi qolgan so‘rovlar',ru:'Запросов осталось сегодня',en:'Requests remaining today'})[lang] + ' · ' + aiQuota.remaining
-        : ({uz:'AI hozircha o‘chiq',ru:'AI пока отключён',en:'AI is currently disabled'})[lang]}</p>}
-
-      <form onSubmit={e => void ask(e)}>
-        <input name="question" required maxLength={2000} aria-label="TOVARIX AI"
-          placeholder={lang === 'ru' ? 'Спросить о продажах' : lang === 'en' ? 'Ask about sales' : 'Savdolar haqida savol'} />
-        <input name="photo" type="file" accept="image/jpeg,image/png,image/webp"
-          aria-label={lang === 'ru' ? 'Фото товара' : lang === 'en' ? 'Product photo' : 'Mahsulot surati'} />
-        <button disabled={asking || aiQuota?.enabled === false || aiQuota?.remaining === 0}>{lang === 'ru' ? 'Спросить' : lang === 'en' ? 'Ask' : 'So‘rash'}</button>
-      </form>
-      {answer && !aiHistory.some(turn => turn.answer === answer) && <article className="ai-answer">{answer}</article>}
-      {aiHistory.map(turn => <article key={turn.id} className="ai-answer"><strong>{turn.question}</strong><div>{turn.answer}</div></article>)}
-    </>}
+    {tab === 9 && <Suspense fallback={<div className="loading-skeleton" aria-busy="true"/>}>
+      <AIChat key={business+'-'+user} {...{client,business,user,lang}} />
+    </Suspense>}
     {tab === 10 && <>
       <form onSubmit={e => void mutate(e, async data => {
         const rows = data.getAll('product').map((product_id, i) => ({
