@@ -7,6 +7,7 @@ import { internalBarcode, saleTotal } from './commerce';
 import { importLegacySale, listSales, removeSale, saveSale } from './sale-queue';
 import type { QueueEntry } from './sale-queue';
 import { Barcode, CreditCard, LogOut, Moon, Package, Plus, RotateCw, Search, ShoppingCart, Sun, Wallet } from 'lucide-react';
+import { CustomerDebts, debtTitle } from './CustomerDebts';
 import { AccountAccess } from './AccountAccess';
 import { AppNavigation, Brand } from './AppNavigation';
 import { Dashboard, dashboardCopy } from './Dashboard';
@@ -593,7 +594,7 @@ function Operations({ client, user, business, store, stores, lang, refresh, prof
   }
 
   const d = dashboardCopy[lang];
-  const pages = [...t.slice(0, 6), ...x.slice(0, 3), 'TOVARIX AI', ...management.slice(0, 4), t[28]];
+  const pages = [...t.slice(0, 6), ...x.slice(0, 3), 'TOVARIX AI', ...management.slice(0, 4), t[28], debtTitle[lang]];
   function change(page: number) {
     setTab(page); setQuery(''); setCatalogPage(0); setScanning(false); setError(''); setContacts([]);
     window.scrollTo(0, 0);
@@ -954,6 +955,7 @@ function Operations({ client, user, business, store, stores, lang, refresh, prof
       </form>
       {expenses.map(expense => <article key={expense.id}>{expense.description} · {money(expense.amount)}</article>)}
     </section>}
+    {tab === 15 && <CustomerDebts {...{ client, business, lang }} />}
     {tab === 13 && <SupportDesk {...{ client, lang, business }} />}
     {label && <section className="label-print">
       <b>{label.name}</b><p>{money(label.price)}</p>

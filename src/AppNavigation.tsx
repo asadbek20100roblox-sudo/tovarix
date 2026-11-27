@@ -2,7 +2,7 @@ import { useRef } from 'react';
 import { Bell, Boxes, ChartNoAxesCombined, ChevronRight, CircleHelp, ClipboardList, CreditCard, House, Menu, Package, Plus, ReceiptText, Settings, Sparkles, Store, Truck, Users, Wallet, X } from 'lucide-react';
 import type { Language } from './labels';
 
-const icons = [House, ReceiptText, Package, Boxes, Store, Settings, Users, Truck, Users, Sparkles, ClipboardList, ChartNoAxesCombined, Wallet, CircleHelp, CreditCard];
+const icons = [House, ReceiptText, Package, Boxes, Store, Settings, Users, Truck, Users, Sparkles, ClipboardList, ChartNoAxesCombined, Wallet, CircleHelp, CreditCard, Wallet];
 const primary = [0, 1, 3, 11];
 const navigationCopy = {
   uz: ['Menyu', 'Bildirishnomalar', 'Tez qo‘shish', 'Yopish', 'Onlayn', 'Oflayn', 'Hisobotlar', 'Hisob', 'Bildirishnomalar yo‘q'],

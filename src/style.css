@@ -272,3 +272,22 @@ button:active:not(:disabled) { transform: scale(.98); }
 .metric-card:nth-child(2) { animation-delay: 28ms; }
 .metric-card:nth-child(3) { animation-delay: 56ms; }
 .metric-card:nth-child(4) { animation-delay: 84ms; }
+
+.debt-screen { background: transparent; box-shadow: none; border: 0; padding: 0 0 30px; margin-top: 14px; }
+.debt-hero { border-radius: 24px; padding: 24px; display: grid; gap: 6px; background: linear-gradient(125deg,#1d4ed8,#2563eb 58%,#3478ef); color: #fff; box-shadow: 0 10px 24px #2563eb26; }
+.debt-hero strong { color: #fff; font-size: clamp(26px,5vw,44px); letter-spacing: -.04em; overflow-wrap: anywhere; }
+.debt-hero small { color: #dbeafe; }
+.debt-filter button[aria-pressed=true] { background: var(--blue-soft); color: var(--blue-text); }
+.debt-list { display: grid; gap: 8px; margin: 12px 0; }
+.debt-person { display: grid; grid-template-columns: auto minmax(0,1fr) minmax(78px,auto) auto; gap: 9px; text-align: start; width: 100%; min-height: 76px; border: 0; border-radius: 16px; box-shadow: var(--shadow); }
+.debt-value { text-align: end; }
+.debt-overdue, .debt-overdue small { color: var(--danger-text); }
+.debt-fab { position: sticky; bottom: 85px; margin-inline-start: auto; display: flex; width: 54px; height: 54px; border-radius: 18px; box-shadow: 0 8px 22px #2563eb44; }
+.debt-sheet { max-width: min(480px, calc(100vw - 24px)); width: 100%; max-height: min(82vh, 720px); padding: 18px; border: 1px solid var(--border); border-radius: 22px; background: var(--card); color: var(--text); }
+.debt-sheet[open] { animation: page-in var(--motion-panel) var(--curve-out) both; }
+.debt-form { display: grid; }
+.debt-form label { display: grid; gap: 4px; }
+.debt-form input, .debt-form select { width: 100%; }
+.debt-history { padding: 0; list-style: none; display: grid; gap: 8px; }
+.debt-history li { display: grid; grid-template-columns: auto minmax(0,1fr) auto; gap: 8px; align-items: center; }
+@media (max-width: 600px) { .debt-sheet { inset: auto 0 0; margin: auto auto 0; max-width: 100%; border-radius: 22px 22px 0 0; } }
