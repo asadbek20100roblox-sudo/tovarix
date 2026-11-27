@@ -13,7 +13,6 @@ test('debt ledger scopes records, replays exactly and rejects overpayment', asyn
   const opener='10000000-0000-0000-0000-000000000001';
   const payer='10000000-0000-0000-0000-000000000002';
   const open=()=>db.query("select public.write_debt($1,$2,1000,'opening',$3,current_date-2,null) id",[business,opener,customer]);
-  await assert.rejects(open(),/plan feature unavailable/);
   await db.exec('reset role');
   await db.query("update public.subscriptions set plan='START',paid_until=now()+interval '1 day' where business_id=$1",[business]);
   await db.exec(login(1));

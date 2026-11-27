@@ -22,7 +22,7 @@ type Named = { id: string; name: string };
 type Product = Named & { barcode: string; price: number; cost: number | null; attributes: Record<string, string> };
 type Stock = { product_id: string; quantity: number };
 type Item = { product_id: string; name: string; quantity: number; price: number; weighted?: boolean; partial_returnable?: boolean };
-type Sale = { id: string; total: number; cost: number | null; created_at: string; items: Item[]; sale_returns?: { sale_id: string } | null; partial_returns?: { product_id: string; quantity: number; total: number }[] };
+type Sale = { credit?: boolean; id: string; total: number; cost: number | null; created_at: string; items: Item[]; sale_returns?: { sale_id: string } | null; partial_returns?: { product_id: string; quantity: number; total: number }[] };
 type Report = {
   totals: { sales: number; revenue: number; profit: number | null; cash: number; card: number };
   branches: { id: string; name: string; sales: number; revenue: number }[];
@@ -273,11 +273,16 @@ function Operations({ client, user, business, store, stores, lang, refresh, prof
   const [cart, setCart] = useState<Record<string, number>>({});
   const [discount, setDiscount] = useState(0);
   const [card, setCard] = useState(0);
+  const [onAccount,setOnAccount]=useState(false);
+  const [debtor,setDebtor]=useState('');
+  const [due,setDue]=useState('');
+  const creditLabel={uz:'Qarzga sotish',ru:'Продажа в долг',en:'Sell on account'}[lang];
   const [scanning, setScanning] = useState(false);
   const video = useRef<HTMLVideoElement>(null);
   const [receipt, setReceipt] = useState<Sale | null>(null);
   const [label, setLabel] = useState<(Product & { image: string }) | null>(null);
   const [contacts, setContacts] = useState<Contact[]>([]);
+  const [checkoutCustomers,setCheckoutCustomers]=useState<Contact[]>([]);
   const [staff, setStaff] = useState<Staff[]>([]);
   const [purchases, setPurchases] = useState<Purchase[]>([]);
   const [purchaseRows, setPurchaseRows] = useState(1);
@@ -312,7 +317,7 @@ function Operations({ client, user, business, store, stores, lang, refresh, prof
     void Promise.all([
       client.from('catalog_access').select('id,name,barcode,price,cost,attributes').eq('business_id', business).order('name'),
       client.from('stock').select('product_id,quantity').eq('business_id', business).eq('store_id', store),
-      client.from('sales_access').select('id,total,cost,created_at,items,sale_returns(sale_id),partial_returns(product_id,quantity,total)').eq('business_id', business).eq('store_id', store).order('created_at', { ascending: false }).limit(250),
+      client.from('sales_access').select('id,total,cost,created_at,items,credit,sale_returns(sale_id),partial_returns(product_id,quantity,total)').eq('business_id', business).eq('store_id', store).order('created_at', { ascending: false }).limit(250),
       client.rpc('financial_access', { p_business: business }),
       client.from('shifts').select('id,opening_cash,opened_at').eq('business_id', business).eq('store_id', store).eq('operator_id', user).is('closed_at', null).maybeSingle(),
     ]).then(([products, stock, sales, access, shifts]) => {
@@ -335,9 +340,9 @@ function Operations({ client, user, business, store, stores, lang, refresh, prof
 
   useEffect(() => {
     let active = true;
-    if (tab === 6 || tab === 7 || tab === 10) {
-      void client.from('contacts').select('id,name,phone').eq('business_id', business).eq('kind', tab === 6 ? 'customer' : 'supplier').order('name')
-        .then(result => { if (active) { setContacts(result.data ?? []); if (result.error) setError(result.error.message); } });
+    if (tab === 1 || tab === 6 || tab === 7 || tab === 10) {
+      void client.from('contacts').select('id,name,phone').eq('business_id', business).eq('kind', tab === 1 || tab === 6 ? 'customer' : 'supplier').order('name')
+        .then(result => { if (active) { (tab===1?setCheckoutCustomers:setContacts)(result.data ?? []); if (result.error) setError(result.error.message); } });
     }
     if (tab === 10) {
       void client.from('purchase_access').select('id,product_id,quantity,total_uzs,reference').eq('business_id', business)
@@ -491,7 +496,7 @@ function Operations({ client, user, business, store, stores, lang, refresh, prof
         for (const entry of entries.filter(sale => sale.status === 'pending')) {
           const { data: session } = await client.auth.getSession();
           if (session.session?.user.id !== user) break;
-          const { data, error } = await client.rpc('checkout', entry.request);
+          const { data, error } = await client.rpc(entry.request.p_customer?'checkout_on_account':'checkout', entry.request);
           if (error) {
             if (!['P0001', '42501', '22P02', '22003'].includes(error.code)) break;
             await saveSale({ ...entry, status: 'conflict', reason: error.message });
@@ -499,7 +504,7 @@ function Operations({ client, user, business, store, stores, lang, refresh, prof
           }
           await saveSale({ ...entry, status: 'confirmed' });
           reload(n => n + 1);
-          const row = await client.from('sales_access').select('id,total,created_at,items').eq('id', data).single();
+          const row = await client.from('sales_access').select('id,total,created_at,items,credit').eq('id', data).single();
           if (row.data) { setLabel(null); setReceipt({ ...row.data, cost: null }); }
         }
         const all = await listSales(scope);
@@ -546,15 +551,16 @@ function Operations({ client, user, business, store, stores, lang, refresh, prof
   }[lang];
 
   async function submit() {
-    if (busy || !queueReady || !lines.length || total === null || !Number.isSafeInteger(card) || card < 0 || card > total) return;
+    if (busy || !queueReady || !lines.length || total === null || !Number.isSafeInteger(card) || card < 0 || card > total || (onAccount && (!debtor || !due || !total))) return;
     setBusy(true);
     setError('');
     try {
       await saveSale({ scope, created: Date.now(), status: 'pending', request: {
         p_business: business, p_store: store, p_request: crypto.randomUUID(), p_lines: lines,
-        p_cash: total - card, p_card: card, p_discount: discount, p_expected: total,
+        p_cash: onAccount ? 0 : total-card, p_card: onAccount ? 0 : card, p_discount: discount, p_expected: total,
+        ...(onAccount ? {p_customer:debtor,p_due:due} : {}),
       } });
-      setCart({}); setDiscount(0); setCard(0); setReceipt(null);
+      setCart({}); setDiscount(0); setCard(0); setOnAccount(false); setDebtor(''); setDue(''); setReceipt(null);
       setQueue(await listSales(scope));
       await synchronize();
     } catch (error) { setError(explain(error)); }
@@ -568,7 +574,7 @@ function Operations({ client, user, business, store, stores, lang, refresh, prof
     window.scrollTo(0, 0);
   }
   return <>
-    <AppNavigation {...{ pages, tab, lang, profile, role, online }} go={change}
+    <AppNavigation desktop {...{ pages, tab, lang, profile, role, online }} go={change}
       alerts={[...announcements.map(notice=>notice.title+' · '+notice.message),...critical.map(p => p.name + ' · ' + p.quantity)].slice(0, 20)} />
     {tab !== 0 && <div className="page-heading page-enter"><div><p className="section-caption">{branchName}</p><h1>{pages[tab]}</h1></div></div>}
     {error && <p role="alert">{error}</p>}
@@ -593,7 +599,7 @@ function Operations({ client, user, business, store, stores, lang, refresh, prof
       {snapshot.sales.map(s => <article key={s.id}><span>{new Date(s.created_at).toLocaleString(lang)} · {money(s.total)}
         {s.sale_returns && ' · ' + lifecycle[4]}</span>
         <button onClick={() => { setLabel(null); setReceipt(s); }}>{t[21]}</button>
-        {!s.sale_returns && s.items.some(item => item.partial_returnable === true) && <details>
+        {!s.credit && !s.sale_returns && s.items.some(item => item.partial_returnable === true) && <details>
           <summary>{lang === 'ru' ? 'Частичный возврат' : lang === 'uz' ? 'Qisman qaytarish' : 'Partial return'}</summary>
           {s.items.filter(item => item.partial_returnable === true).map(item => {
             const returned = (s.partial_returns ?? []).filter(r => r.product_id === item.product_id).reduce((sum, r) => sum + Number(r.quantity), 0);
@@ -622,7 +628,7 @@ function Operations({ client, user, business, store, stores, lang, refresh, prof
             </form>;
           })}
         </details>}
-        {!s.sale_returns && !s.partial_returns?.length && <details><summary>{lifecycle[3]}</summary>
+        {!s.credit && !s.sale_returns && !s.partial_returns?.length && <details><summary>{lifecycle[3]}</summary>
           <form onSubmit={e => void mutate(e, data => client.rpc('return_sale', {
             p_business: business, p_sale: s.id, p_reason: data.get('reason'),
           }))}>
@@ -727,15 +733,22 @@ function Operations({ client, user, business, store, stores, lang, refresh, prof
               setCart(old => ({ ...old, [p.id]: Math.max(0, Math.min(isWeighted(p) ? quantity(p.id) : Math.floor(quantity(p.id)), value)) }));
             }} /></div>)}
         <div className="payment-choice">
-          <button type="button" aria-pressed={card === 0} onClick={() => setCard(0)}><Wallet size={16} />{t[16]}</button>
-          <button type="button" aria-pressed={total !== null && total > 0 && card === total}
-            disabled={!total} onClick={() => setCard(total ?? 0)}><CreditCard size={16} />{lang === 'ru' ? 'Карта' : lang === 'uz' ? 'Karta' : 'Card'}</button>
+          <button type="button" aria-pressed={!onAccount&&card===0} onClick={() => {setCard(0);setOnAccount(false);}}><Wallet size={16} />{t[16]}</button>
+          <button type="button" aria-pressed={!onAccount&&total !== null && total > 0 && card === total}
+            disabled={!total} onClick={() => {setOnAccount(false);setCard(total??0);}}><CreditCard size={16} />{lang === 'ru' ? 'Карта' : lang === 'uz' ? 'Karta' : 'Card'}</button>
+          {checkoutCustomers.length>0&&<button type="button" aria-pressed={onAccount} onClick={()=>{setOnAccount(true);setCard(0);}}>{creditLabel}</button>}
         </div>
+        {onAccount&&<div className="controls">
+          <select value={debtor} onChange={e=>setDebtor(e.target.value)} aria-label={x[0]}>
+            <option value="">—</option>{checkoutCustomers.map(contact=><option value={contact.id} key={contact.id}>{contact.name}</option>)}
+          </select>
+          <input type="date" value={due} onChange={e=>setDue(e.target.value)} aria-label={({uz:'To‘lov muddati',ru:'Срок оплаты',en:'Due date'})[lang]}/>
+        </div>}
         <label>{t[15]} <input type="number" min="0" value={discount} onChange={e => setDiscount(Number(e.target.value))} /></label>
-        <label>{t[17]} <input type="number" min="0" value={card} onChange={e => setCard(Number(e.target.value))} /></label>
-        {total !== null && card <= total && <p>{t[16]} · {money(total - card)}</p>}
+        {!onAccount&&<label>{t[17]} <input type="number" min="0" value={card} onChange={e => setCard(Number(e.target.value))} /></label>}
+        {!onAccount && total !== null && card <= total && <p>{t[16]} · {money(total - card)}</p>}
         {total !== null && <h2>{money(total)}</h2>}
-        <button disabled={busy || !queueReady || !lines.length || total === null || !Number.isSafeInteger(card) || card < 0 || card > total}
+        <button disabled={busy || !queueReady || !lines.length || total === null || !Number.isSafeInteger(card) || card < 0 || card > total || (onAccount&&(!debtor||!due||!total))}
           className="primary-button block" onClick={() => void submit()}>{t[18]}</button>
       </section>}</div>
     </>}
@@ -912,7 +925,7 @@ function Operations({ client, user, business, store, stores, lang, refresh, prof
         <button onClick={() => setLabel(null)}>×</button></div>
     </section>}
     {receipt && <section className="receipt" style={{ width: width + 'mm' }}>
-      <h2>{t[21]}</h2>{receipt.sale_returns && <p>{lifecycle[4]}</p>}<small>{receipt.id}</small><small>{new Date(receipt.created_at).toLocaleString(lang)}</small>
+      <h2>{t[21]}</h2>{receipt.credit&&<p>{creditLabel}</p>}{receipt.sale_returns && <p>{lifecycle[4]}</p>}<small>{receipt.id}</small><small>{new Date(receipt.created_at).toLocaleString(lang)}</small>
       {receipt.items.map(i => <p key={i.product_id}>{i.name} × {i.quantity} · {money(saleTotal([i], 0))}</p>)}
       <strong>{money(receipt.total)}</strong>
       <div className="controls no-print"><select aria-label="mm" value={width} onChange={e => setWidth(Number(e.target.value))}>

@@ -2,6 +2,8 @@ export type Checkout = {
   p_business: string; p_store: string; p_request: string;
   p_lines: { product_id: string; quantity: number; expected_price?: number; operator_id?: string }[];
   p_cash: number; p_card: number; p_discount: number; p_expected: number;
+  p_customer?: string;
+  p_due?: string;
 };
 
 export type QueueEntry = {
