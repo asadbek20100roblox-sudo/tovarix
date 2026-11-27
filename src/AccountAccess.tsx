@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import type { FormEvent } from 'react';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { Brand } from './AppNavigation';
@@ -25,6 +25,15 @@ function callbackFailure() {
 export function AccountAccess({ client, lang, recovery, finishRecovery }: {
   client: SupabaseClient; lang: Language; recovery: boolean; finishRecovery: () => void;
 }) {
+  const [registrationOpen, setRegistrationOpen] = useState(false);
+  useEffect(() => {
+    if (recovery) return;
+    let active = true;
+    void client.rpc('registration_open').then(result => {
+      if (active) setRegistrationOpen(result.data === true);
+    });
+    return () => { active = false; };
+  },[client,recovery]);
   const [mode, setMode] = useState<'sign-in' | 'register' | 'reset' | 'resend'>('sign-in');
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState('');
@@ -33,7 +42,7 @@ export function AccountAccess({ client, lang, recovery, finishRecovery }: {
   const [retryAfter, setRetryAfter] = useState(0);
   const t = copy[lang];
   const l = labels[lang];
-  const registering = !recovery && mode === 'register';
+  const registering = !recovery && registrationOpen && mode === 'register';
   const resetting = !recovery && mode === 'reset';
   const resending = !recovery && mode === 'resend';
   const messages = verification[lang];
@@ -110,7 +119,7 @@ export function AccountAccess({ client, lang, recovery, finishRecovery }: {
     {!recovery && <div className="controls">
       {mode !== 'resend' && <button onClick={() => { setStatus(''); setMode('resend'); }}>{messages[0]}</button>}
       {mode === 'sign-in' ? <>
-        <button onClick={() => { setStatus(''); setMode('register'); }}>{l[25]}</button>
+        {registrationOpen && <button onClick={() => { setStatus(''); setMode('register'); }}>{l[25]}</button>}
         <button onClick={() => { setStatus(''); setMode('reset'); }}>{t[5]}</button>
       </> : <button onClick={() => { setStatus(''); setMode('sign-in'); }}>{t[10]}</button>}
     </div>}

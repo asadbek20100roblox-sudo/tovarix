@@ -12,7 +12,12 @@ void (mode === 'demo' || mode === 'local' ? Promise.resolve(null) : connectSupab
   let hasLegacyData = false;
   try { hasLegacyData = localStorage.getItem('tovarix-v1') !== null; } catch { /* Storage is optional for the demo. */ }
   root.render(supabase ? <Workspace client={supabase} />
-    : mode === 'local' || (mode !== 'demo' && hasLegacyData) ? <LegacyApp /> : <DemoWorkspace />);
+    : mode === 'demo' ? <DemoWorkspace />
+    : mode === 'local' || (Capacitor.isNativePlatform() && hasLegacyData) ? <LegacyApp />
+    : <main className="workspace light"><h1>TOVARIX</h1>
+        <p role="alert">Bulutga ulanish mavjud emas / Подключение к облаку недоступно / Cloud connection unavailable</p>
+        <a href="?mode=demo">Demo</a>
+      </main>);
 
 }).catch(error => {
   console.error('TOVARIX configuration error', error);
