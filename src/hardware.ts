@@ -1,2 +1,32 @@
-export type ScanResult={rawValue:string};type Detector={detect(source:HTMLVideoElement):Promise<ScanResult[]>};type DetectorConstructor=new(options:{formats:string[]})=>Detector;
-export async function openScanner(video:HTMLVideoElement,onCode:(code:string)=>void,onError:(error:unknown)=>void){const D=(globalThis as unknown as {BarcodeDetector?:DetectorConstructor}).BarcodeDetector;if(!D)throw new Error('Native barcode detection unavailable; use manual or HID scanner input');const detector=new D({formats:['ean_13','ean_8','upc_a','upc_e','code_128','qr_code','data_matrix']});const stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:'environment'}},audio:false});let stopped=false;let frame=0;const stop=()=>{stopped=true;cancelAnimationFrame(frame);stream.getTracks().forEach(t=>t.stop());video.srcObject=null};try{video.srcObject=stream;await video.play()}catch(e){stop();throw e}async function tick(){if(stopped)return;try{const result=await detector.detect(video);if(stopped)return;if(result[0]?.rawValue){stop();onCode(result[0].rawValue);return}frame=requestAnimationFrame(tick)}catch(e){stop();onError(e)}}frame=requestAnimationFrame(tick);return stop}
+import { BrowserMultiFormatReader } from '@zxing/browser';
+import { BarcodeFormat, DecodeHintType, NotFoundException } from '@zxing/library';
+
+export async function openScanner(video: HTMLVideoElement, onCode: (code: string) => void, onError: (error: unknown) => void) {
+  const formats = [
+    BarcodeFormat.EAN_13, BarcodeFormat.EAN_8, BarcodeFormat.UPC_A, BarcodeFormat.UPC_E,
+    BarcodeFormat.CODE_128, BarcodeFormat.QR_CODE, BarcodeFormat.DATA_MATRIX,
+  ];
+  const reader = new BrowserMultiFormatReader(new Map([[DecodeHintType.POSSIBLE_FORMATS, formats]]));
+  const controls = await reader.decodeFromConstraints(
+    { video: { facingMode: { ideal: 'environment' } }, audio: false }, video,
+    (result, error, active) => {
+      if (result) { active.stop(); onCode(result.getText()); }
+      else if (error && !(error instanceof NotFoundException) && !['ChecksumException', 'FormatException'].includes(error.constructor.name)) {
+        active.stop(); onError(error);
+      }
+    },
+  );
+  return () => controls.stop();
+}
+
+export interface StoreHardware {
+  printReceipt(document: { text: string; widthMm: 58 | 80 }): Promise<void>;
+  weigh?(): Promise<{ value: number; unit: 'kg' }>;
+  openDrawer?(): Promise<void>;
+}
+
+export interface FiscalProvider {
+  issueReceipt(saleId: string, requestId: string): Promise<{
+    officialId: string; provider: string; verificationUrl?: string;
+  }>;
+}
