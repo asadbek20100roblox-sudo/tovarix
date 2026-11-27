@@ -46,6 +46,11 @@ test('tenant isolation, stock atomicity and idempotent checkout', async () => {
     await db.query("select public.set_staff($1,$2,'cashier',array['sell'])", [business, user(3)]);
     assert.equal((await db.query("select public.redeem_promo($1,'TEST001') as discount", [business])).rows[0].discount, 10);
     await assert.rejects(db.query("select public.redeem_promo($1,'TEST001')", [business]), /already used/);
+    await db.exec('set role service_role');
+    assert.equal((await db.query("select public.open_promo_order($1,'STANDARD',1,'relay','promo-order','TEST001') as amount", [business])).rows[0].amount, 107100);
+    await assert.rejects(db.query("select public.open_promo_order($1,'STANDARD',1,'relay','promo-order2','TEST001')", [business]), /already assigned/);
+    await assert.rejects(db.query("select public.capture_payment('relay','promo-event','promo-order',119000,'UZS')"), /order mismatch/);
+    assert.equal((await db.query("select public.capture_payment('relay','promo-event','promo-order',107100,'UZS') as captured")).rows[0].captured, true);
     await db.exec(login(3));
     assert.equal((await db.query('select count(*)::int as n from public.products')).rows[0].n, 1);
     assert.equal((await db.query('select count(*)::int as n from public.sales')).rows[0].n, 0);
