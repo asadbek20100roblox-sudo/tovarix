@@ -20,6 +20,10 @@ test('verified email gets one trial, expiration restores FREE without deletion',
     assert.equal((await overview(second)).rows[0].details.plan,'FREE');
     await db.query("insert into public.stores(business_id,name) values($1,'Extra')",[first]);
     await assert.rejects(db.query("insert into public.stores(business_id,name) values($1,'Extra')",[second]),/resource limit/);
+    const { rows:[{ id: freeStore }] } = await db.query('select id from public.stores where business_id=$1',[second]);
+    await assert.rejects(db.query("select public.record_expense($1,$2,10,'Free expense')",[second,freeStore]),/plan feature/);
+    await db.query("insert into public.products(business_id,name,barcode,price) select $1,'Synthetic','S'||n,1 from generate_series(1,100) n",[second]);
+    await assert.rejects(db.query("insert into public.products(business_id,name,barcode,price) values($1,'Over','OVER',1)",[second]),/resource limit/);
     await db.query("select public.set_staff($1,$2,'cashier',array['sell'])",[first,user(4)]);
     await db.exec('reset role');
     await db.query("update public.subscriptions set trial_until=now()-interval '1 second' where business_id=$1",[first]);
@@ -37,5 +41,12 @@ test('verified email gets one trial, expiration restores FREE without deletion',
     await db.exec(login(1));
     for (let n=0;n<5;n++) await db.query('select public.ai_context($1)',[first]);
     await assert.rejects(db.query('select public.ai_context($1)',[first]),/AI quota exceeded/);
+    await db.exec('reset role');
+    await db.exec('update commerce_private.platform_settings set ai_daily_budget=5');
+    await db.exec(login(1));
+    await assert.rejects(db.query('select public.ai_context($1)',[second]),/global quota exceeded/);
+    const result = await db.query('select public.ai_remaining($1) as quota',[second]);
+    assert.equal(result.rows[0].quota.remaining,5);
+
   } finally { await db.close(); }
 });
