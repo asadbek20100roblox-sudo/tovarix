@@ -258,3 +258,5 @@ video { display: block; width: min(100%,400px); border-radius: 12px; }
   main > :not(.receipt):not(.label-print), .no-print { display: none !important; }
   .receipt,.label-print { margin: 0; padding: 3mm; border: 0; box-shadow: none; background: #fff; color: #000; font-size: 11px; }
 }
+
+.control-brand-strip .controls { flex-wrap: wrap; justify-content: flex-end; min-width: 0; }

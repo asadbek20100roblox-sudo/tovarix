@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import type { FormEvent } from 'react';
 import { createRoot } from 'react-dom/client';
 import type { Session, SupabaseClient } from '@supabase/supabase-js';
+import { LogOut, Moon, Sun } from 'lucide-react';
 import { Brand } from './AppNavigation';
 import { SupportDesk } from './SupportDesk';
 import { languageNames } from './labels';
@@ -64,11 +65,11 @@ function Control({ client }: { client: SupabaseClient | null }) {
     void run(() => client!.auth.signInWithPassword({ email: String(data.get('email')), password: String(data.get('password')) }));
   }
   return <main className={'workspace ' + (dark ? 'dark' : 'light')}>
-    <header className="brand-strip"><Brand /><div className="controls">
+    <header className="brand-strip control-brand-strip"><Brand /><div className="controls">
       <select aria-label="Language" value={lang} onChange={e => setLang(e.target.value as Language)}>
         {Object.entries(languageNames).map(([code,name]) => <option key={code} value={code}>{name}</option>)}
-      </select><button aria-pressed={dark} onClick={() => setDark(!dark)}>{t[8]}</button>
-      {session && <button onClick={() => void run(() => client!.auth.signOut({ scope:'local' }))}>{t[7]}</button>}
+      </select><button className="icon-button" aria-label={t[8]} aria-pressed={dark} onClick={() => setDark(!dark)}>{dark ? <Sun size={18} /> : <Moon size={18} />}</button>
+      {session && <button className="icon-button" aria-label={t[7]} onClick={() => void run(() => client!.auth.signOut({ scope:'local' }))}><LogOut size={17} /></button>}
     </div></header>
     <div className="page-heading"><h1>TOVARIX CONTROL</h1></div>
     {(!client || (session && state === 'closed')) && <p role="status">{t[6]}</p>}
