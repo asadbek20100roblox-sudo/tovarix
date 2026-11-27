@@ -10,6 +10,9 @@ test('mobile Supabase checkout, persisted offline request, and real retry', { ti
     const context = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
     const page = await context.newPage();
     await page.goto(base);
+    assert.equal(await page.locator('html').getAttribute('lang'), 'uz');
+    await page.getByRole('combobox', { name: 'Language' }).selectOption('ru');
+    await page.getByRole('button', { name: 'Войти', exact: true }).waitFor();
     await page.getByRole('combobox', { name: 'Language' }).selectOption('en');
     await page.getByRole('textbox', { name: 'Email' }).fill('cashier-' + Date.now() + '@example.com');
     await page.getByLabel('Password').fill('Disposable-Tovarix-2026!');
@@ -56,16 +59,25 @@ test('mobile Supabase checkout, persisted offline request, and real retry', { ti
 
     await context.setOffline(true);
     await page.getByRole('button', { name: 'Submit sale' }).click();
-    await page.getByText('Sale awaiting confirmation', { exact: false }).waitFor();
+    await page.getByText(/Sale awaiting confirmation.*1/).waitFor();
+    for (const count of [2, 3]) {
+      await page.getByRole('button', { name: '+Tea', exact: true }).click();
+      await page.getByRole('button', { name: 'Submit sale' }).click();
+      await page.getByText(new RegExp('Sale awaiting confirmation.*' + count)).waitFor();
+    }
     assert.equal(await page.getByText('Internal receipt', { exact: true }).count(), 0);
     await page.reload();
     await page.getByText('Sale awaiting confirmation', { exact: false }).waitFor();
 
     await context.setOffline(false);
-    await page.getByRole('button', { name: 'Retry submission' }).click();
+
     await page.getByRole('heading', { name: 'Internal receipt' }).waitFor();
     await page.getByRole('button', { name: 'Inventory', exact: true }).click();
-    await page.getByText(/Stock 1/).waitFor();
+    await page.getByText(/Stock 0/).waitFor();
+    await page.getByText('Synchronization history', { exact: true }).click();
+    assert.equal(await page.getByText('Confirmed', { exact: true }).count(), 2);
+    await page.getByText('Needs review', { exact: true }).waitFor();
+    await page.getByText('insufficient stock', { exact: true }).waitFor();
     assert.equal(await page.evaluate(() => Object.keys(localStorage).filter(key => key.startsWith('tovarix.outbox.')).length), 0);
   } finally {
     await browser.close();

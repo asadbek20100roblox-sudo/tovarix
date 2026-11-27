@@ -21,7 +21,8 @@ Deno.serve(async request => {
   const model = Deno.env.get('GEMINI_MODEL');
   const url = Deno.env.get('SUPABASE_URL');
   const publicKey = Deno.env.get('SUPABASE_ANON_KEY');
-  if (!key || !model || !url || !publicKey) return json({ error: 'Integration unavailable' }, 503);
+  const serviceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
+  if (!key || !model || !url || !publicKey || !serviceKey) return json({ error: 'Integration unavailable' }, 503);
 
   try {
     const input = await request.text();
@@ -35,11 +36,24 @@ Deno.serve(async request => {
     }
 
     const client = createClient(url, publicKey, { global: { headers: { Authorization: authorization } } });
+    const { data: identity, error: authError } = await client.auth.getUser(authorization.slice(7));
+    if (authError || !identity.user) return json({ error: 'Authentication required' }, 401);
     const { data, error } = await client.rpc('ai_context', { p_business: business });
     if (error) return json({ error: error.code === '42501' ? 'Access denied' : error.message === 'AI quota exceeded' ? 'Quota exceeded' : 'Context unavailable' },
       error.code === '42501' ? 403 : error.message === 'AI quota exceeded' ? 429 : 502);
     const provider = new GeminiProvider(key, model);
-    return json({ answer: await provider.analyze(data, question, image ?? undefined) }, 200);
+    const history = await client.from('ai_history').select('question,answer').eq('business_id', business)
+      .eq('user_id', identity.user.id).order('created_at', { ascending: false }).limit(4);
+    if (history.error) return json({ error: 'History unavailable' }, 502);
+    const previous = (history.data ?? []).reverse().map(turn => ({ question: turn.question, answer: turn.answer.slice(0, 1500) }));
+    const result = await provider.analyze(data, question, image ?? undefined, previous);
+    const server = createClient(url, serviceKey);
+    const logged = await server.rpc('record_ai', {
+      p_business: business, p_user: identity.user.id, p_question: question, p_answer: result.answer,
+      p_model: model, p_input: result.inputTokens, p_output: result.outputTokens,
+    });
+    if (logged.error) return json({ error: 'AI history could not be saved' }, 502);
+    return json({ answer: result.answer }, 200);
   } catch (error) {
     return json({ error: error instanceof SyntaxError ? 'Invalid input' : 'AI unavailable' }, error instanceof SyntaxError ? 400 : 502);
   }

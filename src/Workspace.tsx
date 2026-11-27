@@ -1,16 +1,20 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import type { FormEvent } from 'react';
 import type { Session, SupabaseClient } from '@supabase/supabase-js';
 import { labels, languageNames } from './labels';
 import type { Language } from './labels';
 import { internalBarcode, saleTotal } from './commerce';
+import { importLegacySale, listSales, removeSale, saveSale } from './sale-queue';
+import type { QueueEntry } from './sale-queue';
+import { HardwareDiagnostics } from './HardwareDiagnostics';
+import { SupportDesk } from './SupportDesk';
 import { plans } from './plans';
 
 type Named = { id: string; name: string };
 type Product = Named & { barcode: string; price: number; cost: number; attributes: Record<string, string> };
 type Stock = { product_id: string; quantity: number };
-type Item = { product_id: string; name: string; quantity: number; price: number };
-type Sale = { id: string; total: number; cost: number; created_at: string; items: Item[]; sale_returns?: { sale_id: string } | null };
+type Item = { product_id: string; name: string; quantity: number; price: number; weighted?: boolean; unit_cost?: number };
+type Sale = { id: string; total: number; cost: number; created_at: string; items: Item[]; sale_returns?: { sale_id: string } | null; partial_returns?: { product_id: string; quantity: number; total: number; cost: number }[] };
 type Report = {
   totals: { sales: number; revenue: number; profit: number; cash: number; card: number };
   branches: { id: string; name: string; sales: number; revenue: number }[];
@@ -18,11 +22,13 @@ type Report = {
   popular: { id: string; name: string; units: number }[];
   slow: { id: string; name: string; units: number }[];
 };
-type Shift = { id: string; opening_cash: number; opened_at: string };
-type Checkout = {
-  p_business: string; p_store: string; p_request: string; p_lines: { product_id: string; quantity: number }[];
-  p_cash: number; p_card: number; p_discount: number; p_expected: number;
+type Billing = {
+  plan: string; paid_until: string | null; trial_until: string;
+  payments: { amount_uzs: number; captured_at: string; provider: string; plan: string }[];
 };
+type Expense = { id: string; amount: number; description: string };
+type ShiftSummary = { expected_cash: number | null; closing_cash: number; cash_variance: number | null };
+type Shift = { id: string; opening_cash: number; opened_at: string };
 type Snapshot = { products: Product[]; stock: Stock[]; sales: Sale[] };
 const extra = {
   uz: ['Mijozlar', 'Yetkazib beruvchilar', 'Xodimlar', 'Telefon', 'Boshqa filialga o‘tkazish', 'Miqdor', 'Xodim UUID', 'Vakolatlar', 'Xodimni o‘chirish'],
@@ -38,7 +44,7 @@ const attributeKeys = ['size','color','batch','expiry','serial','warranty','unit
 const permissions = ['sell','discount','inventory','catalog','stores','analytics','audit','staff','supplier','customer','ai','returns'];
 type Purchase = { id: string; product_id: string; quantity: number; total_uzs: number; reference: string };
 type Contact = Named & { phone: string | null };
-type Staff = { user_id: string; role: string; permissions: string[] };
+type Staff = { user_id: string; role: string; permissions: string[]; store_scope: string[] | null };
 const empty: Snapshot = { products: [], stock: [], sales: [] };
 const explain = (error: unknown) => error && typeof error === 'object' && 'message' in error
   ? String(error.message) : String(error);
@@ -78,7 +84,7 @@ export function Workspace({ client }: { client: SupabaseClient }) {
     else if (signup && !result.data.session) setStatus(t[37]);
   }
 
-  return <main className={dark ? '' : 'light'}>
+  return <main className={dark ? 'workspace' : 'workspace light'}>
     <header><div><b>TOVARIX</b><small>BY PIXELFORGE UZ</small></div>
       <div className="controls">
         <select aria-label="Language" value={lang} onChange={e => setLang(e.target.value as Language)}>
@@ -97,12 +103,14 @@ export function Workspace({ client }: { client: SupabaseClient }) {
       </div>
     </header>
     {status && <p role="status">{status}</p>}
+    {session === undefined && <div className="loading-skeleton" aria-busy="true" /> }
     {session === null && <form onSubmit={e => void authenticate(e)}>
       <input name="email" type="email" placeholder="Email" aria-label="Email" autoComplete="email" required />
       <input name="password" type="password" placeholder={t[26]} aria-label={t[26]} autoComplete="current-password" minLength={8} required />
       <button>{t[24]}</button><button value="signup">{t[25]}</button>
     </form>}
-    {session && <BusinessPicker key={session.user.id} client={client} user={session.user.id} lang={lang} />}
+    {session && new URLSearchParams(location.search).get('mode') === 'platform' && <SupportDesk key={session.user.id} client={client} lang={lang} />}
+    {session && new URLSearchParams(location.search).get('mode') !== 'platform' && <BusinessPicker key={session.user.id} client={client} user={session.user.id} lang={lang} />}
   </main>;
 }
 
@@ -183,7 +191,9 @@ function Operations({ client, user, business, store, stores, lang, refresh }: {
   const cacheKey = 'tovarix.cache.' + scope;
   const outboxKey = 'tovarix.outbox.' + scope;
   const [snapshot, setSnapshot] = useState(() => load(cacheKey, empty));
-  const [pending, setPending] = useState<Checkout | null>(() => load(outboxKey, null));
+  const [queue, setQueue] = useState<QueueEntry[]>([]);
+  const [queueReady, setQueueReady] = useState(false);
+  const [online, setOnline] = useState(navigator.onLine);
   const [tab, setTab] = useState(0);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
@@ -202,6 +212,11 @@ function Operations({ client, user, business, store, stores, lang, refresh }: {
   const [contacts, setContacts] = useState<Contact[]>([]);
   const [staff, setStaff] = useState<Staff[]>([]);
   const [purchases, setPurchases] = useState<Purchase[]>([]);
+  const [purchaseRows, setPurchaseRows] = useState(1);
+  const [expenses, setExpenses] = useState<Expense[]>([]);
+  const [shiftSummary, setShiftSummary] = useState<ShiftSummary | null>(null);
+  const [billing, setBilling] = useState<Billing | null>(null);
+  const [promoDiscount, setPromoDiscount] = useState<number | null>(null);
   const [report, setReport] = useState<Report | null>(null);
   const [previousReport, setPreviousReport] = useState<Report | null>(null);
   const x = extra[lang];
@@ -217,6 +232,7 @@ function Operations({ client, user, business, store, stores, lang, refresh }: {
     en: ['Purchases','Analytics','Finance','Support','Document reference','Purchase amount','No supplier','Sales by product','Margin','Last 7 days','Previous 7 days','For support, contact the business owner or your PixelForge UZ representative.'],
   }[lang];
   const t = labels[lang];
+  const [aiHistory, setAiHistory] = useState<{ id: string; question: string; answer: string }[]>([]);
   const [answer, setAnswer] = useState('');
   const [asking, setAsking] = useState(false);
   async function ask(e: FormEvent<HTMLFormElement>) {
@@ -246,6 +262,7 @@ function Operations({ client, user, business, store, stores, lang, refresh }: {
       });
       if (error) throw error;
       setAnswer(data.answer);
+      reload(n => n + 1);
     } catch (err) { setError(explain(err)); }
     finally { setAsking(false); }
   }
@@ -256,7 +273,7 @@ function Operations({ client, user, business, store, stores, lang, refresh }: {
     void Promise.all([
       client.from('products').select('id,name,barcode,price,cost,attributes').eq('business_id', business).order('name'),
       client.from('stock').select('product_id,quantity').eq('business_id', business).eq('store_id', store),
-      client.from('sales').select('id,total,cost,created_at,items,sale_returns(sale_id)').eq('business_id', business).eq('store_id', store).order('created_at', { ascending: false }).limit(250),
+      client.from('sales').select('id,total,cost,created_at,items,sale_returns(sale_id),partial_returns(product_id,quantity,total,cost)').eq('business_id', business).eq('store_id', store).order('created_at', { ascending: false }).limit(250),
       client.from('shifts').select('id,opening_cash,opened_at').eq('business_id', business).eq('store_id', store).eq('operator_id', user).is('closed_at', null).maybeSingle(),
     ]).then(([products, stock, sales, shifts]) => {
       if (!active) return;
@@ -286,6 +303,21 @@ function Operations({ client, user, business, store, stores, lang, refresh }: {
         .eq('store_id', store).order('created_at', { ascending: false }).limit(250)
         .then(result => { if (active) { setPurchases(result.data ?? []); if (result.error) setError(result.error.message); } });
     }
+    if (tab === 12) {
+      void client.from('expenses').select('id,amount,description').eq('business_id', business).eq('store_id', store)
+        .order('created_at', { ascending: false }).limit(50).then(result => { if (active) setExpenses(result.data ?? []); });
+    }
+    if (tab === 1) {
+      void client.from('shifts').select('expected_cash,closing_cash,cash_variance')
+        .eq('business_id', business).eq('store_id', store).eq('operator_id', user)
+        .not('closed_at', 'is', null).order('closed_at', { ascending: false }).limit(1).maybeSingle()
+        .then(result => { if (active) setShiftSummary(result.data); });
+    }
+    if (tab === 5) {
+      void client.rpc('billing_overview', { p_business: business }).then(result => {
+        if (active) setBilling(result.data);
+      });
+    }
     if (tab === 11 || tab === 12) {
       const date = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Tashkent', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
       const today = new Date(date + 'T12:00:00Z');
@@ -301,12 +333,16 @@ function Operations({ client, user, business, store, stores, lang, refresh }: {
         if (error) setError(error.message);
       });
     }
+    if (tab === 9) {
+      void client.from('ai_history').select('id,question,answer').eq('business_id', business).eq('user_id', user)
+        .order('created_at', { ascending: false }).limit(20).then(result => { if (active) setAiHistory(result.data ?? []); });
+    }
     if (tab === 8) {
-      void client.from('members').select('user_id,role,permissions').eq('business_id', business)
+      void client.from('members').select('user_id,role,permissions,store_scope').eq('business_id', business)
         .then(result => { if (active) { setStaff(result.data ?? []); if (result.error) setError(result.error.message); } });
     }
     return () => { active = false; };
-  }, [tab, business, store, client, revision]);
+  }, [tab, business, store, client, revision, user]);
 
   async function makeLabel(product: Product) {
     try {
@@ -320,11 +356,15 @@ function Operations({ client, user, business, store, stores, lang, refresh }: {
 
   const quantity = (id: string) => Number(snapshot.stock.find(s => s.product_id === id)?.quantity ?? 0);
   const selected = snapshot.products.filter(p => cart[p.id] > 0);
-  const lines = selected.map(p => ({ product_id: p.id, quantity: cart[p.id] }));
+  const lines = selected.map(p => ({ product_id: p.id, quantity: cart[p.id], expected_price: p.price, operator_id: user }));
   let total: number | null = null;
   try { total = saleTotal(selected.map(p => ({ price: p.price, quantity: cart[p.id] })), discount); }
   catch { /* Invalid amounts cannot be submitted. */ }
-  const sales = snapshot.sales.filter(s => !s.sale_returns);
+  const sales = snapshot.sales.filter(s => !s.sale_returns).map(s => ({
+    ...s,
+    total: s.total - (s.partial_returns ?? []).reduce((sum, returned) => sum + returned.total, 0),
+    cost: s.cost - (s.partial_returns ?? []).reduce((sum, returned) => sum + returned.cost, 0),
+  }));
   const daily = Array.from({ length: 7 }, (_, index) => {
     const day = new Date();
     day.setHours(0, 0, 0, 0);
@@ -335,8 +375,12 @@ function Operations({ client, user, business, store, stores, lang, refresh }: {
   });
   const ceiling = Math.max(1, ...daily.map(d => d.value));
 
+  const isWeighted = (p: Product) => p.attributes?.unit?.trim().toLowerCase() === 'kg';
   function add(id: string) {
-    setCart(old => ({ ...old, [id]: Math.min(Math.floor(quantity(id)), (old[id] || 0) + 1) }));
+    const product = snapshot.products.find(p => p.id === id);
+    if (!product) return;
+    const limit = isWeighted(product) ? quantity(id) : Math.floor(quantity(id));
+    setCart(old => ({ ...old, [id]: Math.min(limit, Math.round(((old[id] || 0) + 1) * 1000) / 1000) }));
   }
 
   useEffect(() => {
@@ -370,54 +414,109 @@ function Operations({ client, user, business, store, stores, lang, refresh }: {
     } catch (err) { setError(explain(err)); }
   }
 
-  async function submit() {
+  const synchronize = useCallback(async () => {
     if (sending.current) return;
     sending.current = true;
     setBusy(true);
     try {
+      const transmit = async () => {
+        const raw = localStorage.getItem(outboxKey);
+        if (raw) {
+          await importLegacySale(scope, raw);
+          localStorage.removeItem(outboxKey);
+        }
+        const entries = await listSales(scope);
+        setQueue(entries);
+        setQueueReady(true);
+        if (!navigator.onLine) return;
+        for (const entry of entries.filter(sale => sale.status === 'pending')) {
+          const { data: session } = await client.auth.getSession();
+          if (session.session?.user.id !== user) break;
+          const { data, error } = await client.rpc('checkout', entry.request);
+          if (error) {
+            if (!['P0001', '42501', '22P02', '22003'].includes(error.code)) break;
+            await saveSale({ ...entry, status: 'conflict', reason: error.message });
+            continue;
+          }
+          await saveSale({ ...entry, status: 'confirmed' });
+          reload(n => n + 1);
+          const row = await client.from('sales').select('id,total,cost,created_at,items').eq('id', data).single();
+          if (row.data) { setLabel(null); setReceipt(row.data); }
+        }
+        const all = await listSales(scope);
+        const old = all.filter(entry => entry.status === 'confirmed').slice(0, -50);
+        for (const entry of old) await removeSale(entry);
+        setQueue(all.filter(entry => !old.includes(entry)));
+      };
       if (navigator.locks) await navigator.locks.request(outboxKey, transmit);
       else await transmit();
-    } finally {
-      sending.current = false;
-      setBusy(false);
-    }
-  }
+    } catch (error) { setError(explain(error)); }
+    finally { sending.current = false; setBusy(false); }
+  }, [client, outboxKey, scope, user]);
 
-  async function transmit() {
-    const saved = load<Checkout | null>(outboxKey, null);
-    if (!saved && !pending && (!lines.length || total === null || !Number.isSafeInteger(card) || card < 0 || card > total)) return;
-    const request = saved ?? pending ?? {
-      p_business: business, p_store: store, p_request: crypto.randomUUID(), p_lines: lines,
-      p_cash: total! - card, p_card: card, p_discount: discount, p_expected: total!,
+  useEffect(() => {
+    const connected = () => { setOnline(true); void synchronize(); };
+    const disconnected = () => setOnline(false);
+    window.addEventListener('online', connected);
+    window.addEventListener('offline', disconnected);
+    void synchronize();
+    const timer = window.setInterval(() => void synchronize(), 15000);
+    return () => {
+      window.clearInterval(timer);
+      window.removeEventListener('online', connected);
+      window.removeEventListener('offline', disconnected);
     };
+  }, [synchronize]);
+
+  const operationsText = {
+    uz: ['Sanash', 'Haqiqiy qoldiq', 'Filiallarga kirish', 'Barcha filiallar'],
+    ru: ['Инвентаризация', 'Фактический остаток', 'Доступ к филиалам', 'Все филиалы'],
+    en: ['Stocktake', 'Counted quantity', 'Branch access', 'All branches'],
+  }[lang];
+  const cashText = {
+    uz: ['Kutilgan naqd pul', 'Tafovut', 'Xarajatlar', 'Summa', 'Tavsif'],
+    ru: ['Ожидаемые наличные', 'Расхождение', 'Расходы', 'Сумма', 'Описание'],
+    en: ['Expected cash', 'Variance', 'Expenses', 'Amount', 'Description'],
+  }[lang];
+  const pending = queue.filter(entry => entry.status === 'pending');
+  const history = queue.filter(entry => entry.status !== 'pending').slice(-50).reverse();
+  const queueText = {
+    uz: ['Sinxronlash tarixi', 'Tasdiqlandi', 'Tekshirish kerak', 'Tarmoqda', 'Tarmoq yo‘q'],
+    ru: ['История синхронизации', 'Подтверждено', 'Требуется проверка', 'В сети', 'Нет связи'],
+    en: ['Synchronization history', 'Confirmed', 'Needs review', 'Online', 'Offline'],
+  }[lang];
+
+  async function submit() {
+    if (busy || !queueReady || !lines.length || total === null || !Number.isSafeInteger(card) || card < 0 || card > total) return;
+    setBusy(true);
     setError('');
     try {
-      localStorage.setItem(outboxKey, JSON.stringify(request));
-      setPending(request);
-      const result = await client.rpc('checkout', request);
-      if (result.error) {
-        if (['P0001', '42501', '22P02', '22003'].includes(result.error.code) && !result.error.message.includes('different payload')) {
-          localStorage.removeItem(outboxKey);
-          setPending(null);
-        }
-        throw result.error;
-      }
-      localStorage.removeItem(outboxKey);
-      setPending(null); setCart({}); setDiscount(0); setCard(0);
-      reload(n => n + 1);
-      const row = await client.from('sales').select('id,total,cost,created_at,items,sale_returns(sale_id)').eq('id', result.data).single();
-      if (row.data) { setLabel(null); setReceipt({ ...row.data, sale_returns: null }); }
-      if (row.error) setError(row.error.message);
-    } catch (err) { setError(explain(err)); }
+      await saveSale({ scope, created: Date.now(), status: 'pending', request: {
+        p_business: business, p_store: store, p_request: crypto.randomUUID(), p_lines: lines,
+        p_cash: total - card, p_card: card, p_discount: discount, p_expected: total,
+      } });
+      setCart({}); setDiscount(0); setCard(0); setReceipt(null);
+      setQueue(await listSales(scope));
+      await synchronize();
+    } catch (error) { setError(explain(error)); }
+    finally { setBusy(false); }
   }
 
   return <>
-    <nav aria-label="TOVARIX">{[...t.slice(0, 6), ...x.slice(0, 3), 'TOVARIX AI', ...management.slice(0, 4)].map((label, i) => <button key={i} className={tab === i ? 'active' : ''} onClick={() => {
+    <nav className="workspace-nav" aria-label="TOVARIX">{[...t.slice(0, 6), ...x.slice(0, 3), 'TOVARIX AI', ...management.slice(0, 4)].map((label, i) => <button key={i} aria-current={tab === i ? 'page' : undefined} className={tab === i ? 'active' : ''} onClick={() => {
       setTab(i); setQuery(''); setScanning(false); setError(''); setContacts([]);
     }}>{label}</button>)}</nav>
     <h1>{tab < 6 ? t[tab] : tab < 9 ? x[tab - 6] : tab === 9 ? 'TOVARIX AI' : management[tab - 10]}</h1>
     {error && <p role="alert">{error}</p>}
-    {pending && <p role="status">{t[19]} <button disabled={busy} onClick={() => void submit()}>{t[20]}</button></p>}
+    <p className="connection" role="status">{queueText[online ? 3 : 4]}</p>
+    {pending.length > 0 && <p role="status">{t[19]} ({pending.length}) <button disabled={busy || !online} onClick={() => void synchronize()}>{t[20]}</button></p>}
+    {history.length > 0 && <details><summary>{queueText[0]}</summary>
+      {history.map(entry => <article key={entry.request.p_request}>
+        <strong>{queueText[entry.status === 'confirmed' ? 1 : 2]}</strong>
+        <small>{entry.request.p_request} · {money(entry.request.p_expected)}</small>
+        {entry.reason && <span>{entry.reason}</span>}
+      </article>)}
+    </details>}
     {tab === 0 && <>
       <div className="grid">{[[t[28], sales.length], [t[29], money(sales.reduce((sum, s) => sum + s.total, 0))],
         [t[30], money(sales.reduce((sum, s) => sum + s.total - s.cost, 0))]].map(([label, value]) =>
@@ -429,7 +528,36 @@ function Operations({ client, user, business, store, stores, lang, refresh }: {
       {snapshot.sales.map(s => <article key={s.id}><span>{new Date(s.created_at).toLocaleString(lang)} · {money(s.total)}
         {s.sale_returns && ' · ' + lifecycle[4]}</span>
         <button onClick={() => { setLabel(null); setReceipt(s); }}>{t[21]}</button>
-        {!s.sale_returns && <details><summary>{lifecycle[3]}</summary>
+        {!s.sale_returns && s.items.some(item => item.unit_cost !== undefined) && <details>
+          <summary>{lang === 'ru' ? 'Частичный возврат' : lang === 'uz' ? 'Qisman qaytarish' : 'Partial return'}</summary>
+          {s.items.filter(item => item.unit_cost !== undefined).map(item => {
+            const returned = (s.partial_returns ?? []).filter(r => r.product_id === item.product_id).reduce((sum, r) => sum + Number(r.quantity), 0);
+            const maximum = Math.round((item.quantity - returned) * 1000) / 1000;
+            const requestKey = item.product_id + ':' + maximum;
+            return maximum > 0 && <form key={requestKey} onSubmit={e => {
+              const form = e.currentTarget;
+              if (form.dataset.sending === 'yes') { e.preventDefault(); return; }
+              form.dataset.sending = 'yes';
+              const id = form.dataset.request ?? crypto.randomUUID();
+              form.dataset.request = id;
+              void mutate(e, async data => {
+                try {
+                  return await client.rpc('partial_return', {
+                    p_business: business, p_sale: s.id, p_request: id, p_product: item.product_id,
+                    p_quantity: Number(data.get('quantity')), p_reason: data.get('reason'),
+                  });
+                } finally { delete form.dataset.sending; }
+              });
+            }}>
+              <b>{item.name}</b>
+              <input name="quantity" type="number" min={item.weighted ? '0.001' : '1'} step={item.weighted ? '0.001' : '1'}
+                max={maximum} required aria-label={x[5]} />
+              <input name="reason" required maxLength={500} aria-label={t[33]} />
+              <button>{t[12]}</button>
+            </form>;
+          })}
+        </details>}
+        {!s.sale_returns && !s.partial_returns?.length && <details><summary>{lifecycle[3]}</summary>
           <form onSubmit={e => void mutate(e, data => client.rpc('return_sale', {
             p_business: business, p_sale: s.id, p_reason: data.get('reason'),
           }))}>
@@ -443,8 +571,13 @@ function Operations({ client, user, business, store, stores, lang, refresh }: {
         p_business: business, p_store: store, p_cash: Number(data.get('cash')), p_close: !!shift,
       }))}>
         <input name="cash" type="number" min="0" required placeholder={lifecycle[2]} aria-label={lifecycle[2]} />
-        <button disabled={!!pending}>{shift ? lifecycle[1] : lifecycle[0]}</button>
+        <button disabled={pending.length > 0}>{shift ? lifecycle[1] : lifecycle[0]}</button>
       </form>}
+      {tab === 1 && shiftSummary?.expected_cash != null && <article>
+        <span>{cashText[0]} · {money(shiftSummary.expected_cash)}</span>
+        <span>{lifecycle[2]} · {money(shiftSummary.closing_cash)}</span>
+        <span>{cashText[1]} · {money(shiftSummary.cash_variance ?? 0)}</span>
+      </article>}
       {tab === 2 && <div className="controls">
         <button onClick={async () => {
           try { await (await import('./spreadsheet')).exportCatalog(snapshot.products); }
@@ -476,7 +609,7 @@ function Operations({ client, user, business, store, stores, lang, refresh }: {
       </form>}
       <div className="controls"><input placeholder={t[8] + ' / ' + t[9]} aria-label={t[8] + ' / ' + t[9]} value={query}
         onChange={e => setQuery(e.target.value)} onKeyDown={e => {
-          if (e.key !== 'Enter' || tab !== 1 || pending) return;
+          if (e.key !== 'Enter' || tab !== 1) return;
           const found = snapshot.products.find(p => p.barcode === query.trim());
           if (found) { add(found.id); setQuery(''); }
         }} />
@@ -486,7 +619,7 @@ function Operations({ client, user, business, store, stores, lang, refresh }: {
       <div className={tab === 1 ? 'pos' : ''}><div>
         {snapshot.products.filter(p => (p.name + ' ' + p.barcode).toLowerCase().includes(query.toLowerCase())).map(p => <article key={p.id}>
           <b>{p.name}</b>{tab === 2 && <small>{attributeKeys.map((key, i) => p.attributes?.[key] ? attributeNames[lang][i] + ': ' + p.attributes[key] : '').filter(Boolean).join(' · ')}</small>}<small>{p.barcode} · {t[13]} {quantity(p.id)}{tab === 3 && quantity(p.id) <= 5 && ' · ' + lifecycle[5]}</small><span>{money(p.price)}</span>
-          {tab === 1 && <button aria-label={'+' + p.name} disabled={!!pending || (cart[p.id] || 0) >= Math.floor(quantity(p.id))} onClick={() => add(p.id)}>+</button>}
+          {tab === 1 && <button aria-label={'+' + p.name} disabled={(cart[p.id] || 0) >= (isWeighted(p) ? quantity(p.id) : Math.floor(quantity(p.id)))} onClick={() => add(p.id)}>+</button>}
           {tab === 2 && <button onClick={() => void makeLabel(p)}>{t[41]}</button>}
           {tab === 3 && <form onSubmit={e => void mutate(e, data => client.rpc('adjust_stock', {
             p_business: business, p_store: store, p_product: p.id, p_delta: Number(data.get('delta')), p_reason: data.get('reason'),
@@ -495,6 +628,16 @@ function Operations({ client, user, business, store, stores, lang, refresh }: {
             <input name="reason" maxLength={500} required placeholder={t[33]} aria-label={t[33]} />
             <button>{t[12]}</button>
           </form>}
+          {tab === 3 && <details><summary>{operationsText[0]}</summary>
+            <form key={quantity(p.id)} onSubmit={e => void mutate(e, data => client.rpc('count_stock', {
+              p_business: business, p_store: store, p_product: p.id, p_expected: quantity(p.id),
+              p_count: Number(data.get('count')), p_reason: data.get('reason'),
+            }))}>
+              <input name="count" type="number" min="0" step="0.001" required aria-label={operationsText[1]} />
+              <input name="reason" maxLength={400} required aria-label={t[33]} />
+              <button>{t[12]}</button>
+            </form>
+          </details>}
           {tab === 3 && stores.some(s => s.id !== store) && <form onSubmit={e => void mutate(e, data => client.rpc('transfer_stock', {
             p_business: business, p_from: store, p_to: data.get('to'), p_product: p.id, p_quantity: Number(data.get('quantity')),
           }))}>
@@ -505,13 +648,16 @@ function Operations({ client, user, business, store, stores, lang, refresh }: {
         </article>)}
       </div>
       {tab === 1 && <section><h2>{t[14]}</h2>
-        {selected.map(p => <div className="controls" key={p.id}>{p.name} × {cart[p.id]}
-          <button disabled={!!pending} onClick={() => setCart(old => ({ ...old, [p.id]: Math.max(0, old[p.id] - 1) }))}>−</button></div>)}
-        <label>{t[15]} <input type="number" min="0" value={discount} disabled={!!pending} onChange={e => setDiscount(Number(e.target.value))} /></label>
-        <label>{t[17]} <input type="number" min="0" value={card} disabled={!!pending} onChange={e => setCard(Number(e.target.value))} /></label>
+        {selected.map(p => <div className="controls" key={p.id}>{p.name} × {isWeighted(p)
+          ? <input aria-label={p.name + ' · kg'} type="number" min="0.001" max={quantity(p.id)} step="0.001"
+            value={cart[p.id]} onChange={e => setCart(old => ({ ...old, [p.id]: Math.min(quantity(p.id), Number(e.target.value)) }))} />
+          : cart[p.id]}
+          <button onClick={() => setCart(old => ({ ...old, [p.id]: Math.max(0, Math.round((old[p.id] - 1) * 1000) / 1000) }))}>−</button></div>)}
+        <label>{t[15]} <input type="number" min="0" value={discount} onChange={e => setDiscount(Number(e.target.value))} /></label>
+        <label>{t[17]} <input type="number" min="0" value={card} onChange={e => setCard(Number(e.target.value))} /></label>
         {total !== null && card <= total && <p>{t[16]} · {money(total - card)}</p>}
         {total !== null && <h2>{money(total)}</h2>}
-        <button disabled={busy || !!pending || !lines.length || total === null || !Number.isSafeInteger(card) || card < 0 || card > total}
+        <button disabled={busy || !queueReady || !lines.length || total === null || !Number.isSafeInteger(card) || card < 0 || card > total}
           onClick={() => void submit()}>{t[18]}</button>
       </section>}</div>
     </>}
@@ -522,8 +668,32 @@ function Operations({ client, user, business, store, stores, lang, refresh }: {
     })}>
       <input name="name" required maxLength={200} placeholder={t[7]} aria-label={t[7]} /><button>{t[12]}</button>
     </form>}
-    {tab === 5 && <div className="grid">{plans.map(p => <article key={p.id}><b>{p.id}</b><span>{money(p.monthly)}</span>
-      {p.yearly > 0 && <small>{money(p.yearly)} / {lang === 'ru' ? 'год' : lang === 'uz' ? 'yil' : 'year'}</small>}</article>)}</div>}
+    {tab === 5 && <>
+      <HardwareDiagnostics lang={lang} />
+      <div className="grid">{plans.map(p => <article key={p.id} className={billing?.plan === p.id ? 'current-plan' : ''}>
+        <b>{p.id}</b><span>{money(p.monthly)} / {lang === 'ru' ? 'месяц' : lang === 'uz' ? 'oy' : 'month'}</span>
+        <small>{money(p.yearly)} / {lang === 'ru' ? 'год' : lang === 'uz' ? 'yil' : 'year'}</small>
+        <small>{x[2]} · {p.employees ?? '∞'}</small>
+      </article>)}</div>
+      {billing && <section>
+        <h2>{billing.plan}</h2>
+        {billing.paid_until && <p>{new Date(billing.paid_until).toLocaleDateString(lang)}</p>}
+        <p>{lang === 'ru' ? 'Пробный период до' : lang === 'uz' ? 'Sinov muddati' : 'Trial ends'} {new Date(billing.trial_until).toLocaleDateString(lang)}</p>
+        <form onSubmit={e => void mutate(e, async data => {
+          const result = await client.rpc('redeem_promo', { p_business: business, p_code: data.get('code') });
+          if (!result.error) setPromoDiscount(result.data);
+          return result;
+        })}>
+          <input name="code" required maxLength={40} aria-label={lang === 'ru' ? 'Промокод' : 'Promo kod'} />
+          <button>{t[12]}</button>
+        </form>
+        {promoDiscount !== null && <p role="status">{t[15]} {promoDiscount}%</p>}
+        <h3>{lang === 'ru' ? 'История платежей' : lang === 'uz' ? 'To‘lovlar tarixi' : 'Payment history'}</h3>
+        {billing.payments.map((payment,i) => <p key={payment.captured_at + i}>
+          {new Date(payment.captured_at).toLocaleString(lang)} · {payment.plan} · {payment.provider} · {money(payment.amount_uzs)}
+        </p>)}
+      </section>}
+    </>}
     {(tab === 6 || tab === 7) && <>
       <form onSubmit={e => void mutate(e, data => client.from('contacts').insert({
         business_id: business, kind: tab === 6 ? 'customer' : 'supplier',
@@ -551,7 +721,18 @@ function Operations({ client, user, business, store, stores, lang, refresh }: {
         <button>{t[12]}</button><button value="remove">{x[8]}</button>
       </form>
       {staff.map(member => <article key={member.user_id}><strong>{member.user_id}</strong>
-        <span>{member.role} · {member.permissions.join(', ')}</span></article>)}
+        <span>{member.role} · {member.permissions.join(', ')}</span>
+        <details><summary>{operationsText[2]}</summary>
+          <form key={JSON.stringify(member.store_scope)} onSubmit={e => void mutate(e, data => client.rpc('set_store_scope', {
+            p_business: business, p_user: member.user_id, p_stores: data.has('all') ? null : data.getAll('branches'),
+          }))}>
+            <label className="permission"><input type="checkbox" name="all" defaultChecked={member.store_scope === null} />{operationsText[3]}</label>
+            {stores.map(branch => <label className="permission" key={branch.id}>
+              <input type="checkbox" name="branches" value={branch.id} defaultChecked={member.store_scope?.includes(branch.id)} />{branch.name}
+            </label>)}
+            <button>{t[12]}</button>
+          </form>
+        </details></article>)}
     </>}
     {tab === 9 && <>
       <form onSubmit={e => void ask(e)}>
@@ -561,18 +742,32 @@ function Operations({ client, user, business, store, stores, lang, refresh }: {
           aria-label={lang === 'ru' ? 'Фото товара' : lang === 'en' ? 'Product photo' : 'Mahsulot surati'} />
         <button disabled={asking}>{lang === 'ru' ? 'Спросить' : lang === 'en' ? 'Ask' : 'So‘rash'}</button>
       </form>
-      {answer && <article className="ai-answer">{answer}</article>}
+      {answer && !aiHistory.some(turn => turn.answer === answer) && <article className="ai-answer">{answer}</article>}
+      {aiHistory.map(turn => <article key={turn.id} className="ai-answer"><strong>{turn.question}</strong><div>{turn.answer}</div></article>)}
     </>}
     {tab === 10 && <>
-      <form onSubmit={e => void mutate(e, data => client.rpc('receive_purchase', {
-        p_business: business, p_store: store, p_product: data.get('product'), p_supplier: data.get('supplier') || null,
-        p_quantity: Number(data.get('quantity')), p_total: Number(data.get('total')), p_reference: data.get('reference'),
-      }))}>
-        <select name="product" aria-label={t[2]} required><option value="">{t[2]}</option>{snapshot.products.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}</select>
+      <form onSubmit={e => void mutate(e, async data => {
+        const rows = data.getAll('product').map((product_id, i) => ({
+          product_id, quantity: Number(data.getAll('quantity')[i]), total: Number(data.getAll('total')[i]),
+        }));
+        const result = await client.rpc('receive_purchase_batch', {
+          p_business: business, p_store: store, p_supplier: data.get('supplier') || null,
+          p_reference: data.get('reference'), p_lines: rows,
+        });
+        if (!result.error) setPurchaseRows(1);
+        return result;
+      })}>
         <select name="supplier" aria-label={x[1]}><option value="">{management[6]}</option>{contacts.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}</select>
-        <input name="quantity" type="number" step="0.001" min="0.001" required placeholder={x[5]} aria-label={x[5]} />
-        <input name="total" type="number" min="0" required placeholder={management[5]} aria-label={management[5]} />
         <input name="reference" maxLength={120} required placeholder={management[4]} aria-label={management[4]} />
+        {Array.from({ length: purchaseRows }, (_, i) => <fieldset className="controls" key={i}>
+          <select name="product" aria-label={t[2] + ' ' + (i + 1)} required><option value="">{t[2]}</option>
+            {snapshot.products.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+          </select>
+          <input name="quantity" type="number" step="0.001" min="0.001" required placeholder={x[5]} aria-label={x[5] + ' ' + (i + 1)} />
+          <input name="total" type="number" min="0" required placeholder={management[5]} aria-label={management[5] + ' ' + (i + 1)} />
+        </fieldset>)}
+        <button type="button" disabled={purchaseRows === 100} onClick={() => setPurchaseRows(n => n + 1)}>+ {t[2]}</button>
+        {purchaseRows > 1 && <button type="button" onClick={() => setPurchaseRows(n => n - 1)}>− {t[2]}</button>}
         <button>{t[12]}</button>
       </form>
       {purchases.map(p => <article key={p.id}><b>{p.reference}</b><span>{snapshot.products.find(x => x.id === p.product_id)?.name} × {p.quantity}</span><span>{money(p.total_uzs)}</span></article>)}
@@ -604,7 +799,17 @@ function Operations({ client, user, business, store, stores, lang, refresh }: {
       {report.totals.revenue > 0 && <div role="img" className="tender-chart" aria-label={t[16] + ': ' + money(report.totals.cash) + ', ' + t[17] + ': ' + money(report.totals.card)}
         style={{ backgroundImage: 'conic-gradient(#508cf7 0 ' + 100 * report.totals.cash / report.totals.revenue + '%, #28b594 0)' }} />}
     </>}
-    {tab === 13 && <p>{management[11]}</p>}
+    {tab === 12 && <section><h2>{cashText[2]}</h2>
+      <form onSubmit={e => void mutate(e, data => client.rpc('record_expense', {
+        p_business: business, p_store: store, p_amount: Number(data.get('amount')), p_description: data.get('description'),
+      }))}>
+        <input name="amount" type="number" min="1" required aria-label={cashText[3]} placeholder={cashText[3]} />
+        <input name="description" maxLength={300} required aria-label={cashText[4]} placeholder={cashText[4]} />
+        <button>{t[12]}</button>
+      </form>
+      {expenses.map(expense => <article key={expense.id}>{expense.description} · {money(expense.amount)}</article>)}
+    </section>}
+    {tab === 13 && <SupportDesk {...{ client, lang, business }} />}
     {label && <section className="label-print">
       <b>{label.name}</b><p>{money(label.price)}</p>
       <img src={label.image} alt={label.barcode} style={{ maxWidth: '100%' }} />
@@ -613,7 +818,7 @@ function Operations({ client, user, business, store, stores, lang, refresh }: {
     </section>}
     {receipt && <section className="receipt" style={{ width: width + 'mm' }}>
       <h2>{t[21]}</h2>{receipt.sale_returns && <p>{lifecycle[4]}</p>}<small>{receipt.id}</small><small>{new Date(receipt.created_at).toLocaleString(lang)}</small>
-      {receipt.items.map(i => <p key={i.product_id}>{i.name} × {i.quantity} · {money(i.price * i.quantity)}</p>)}
+      {receipt.items.map(i => <p key={i.product_id}>{i.name} × {i.quantity} · {money(saleTotal([i], 0))}</p>)}
       <strong>{money(receipt.total)}</strong>
       <div className="controls no-print"><select aria-label="mm" value={width} onChange={e => setWidth(Number(e.target.value))}>
         <option value={58}>58 mm</option><option value={80}>80 mm</option>

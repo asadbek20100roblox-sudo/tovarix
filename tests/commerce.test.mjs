@@ -22,3 +22,8 @@ test('published tariffs match the approved values', () => {
     ['PLUS', 249000, 2599000, 10], ['PRO', 599000, 5999000, 50], ['PREMIUM', 1219000, 10999000, null],
   ]);
 });
+
+test('weighted lines round individually to whole UZS, half up', () => {
+  assert.equal(saleTotal([{ price: 5, quantity: 0.5 }, { price: 5, quantity: 0.5 }], 0), 6);
+  assert.throws(() => saleTotal([{ price: 5, quantity: 0.0005 }], 0));
+});

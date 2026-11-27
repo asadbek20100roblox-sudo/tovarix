@@ -6,8 +6,9 @@ import { connectSupabase } from './supabase';
 import './style.css';
 
 const root = createRoot(document.getElementById('root')!);
-void connectSupabase().then(supabase => {
-  root.render(supabase ? <Workspace client={supabase} /> : <LegacyApp />);
+const demo = new URLSearchParams(location.search).get('mode') === 'demo';
+void (demo ? Promise.resolve(null) : connectSupabase()).then(supabase => {
+  root.render(supabase ? <Workspace client={supabase} /> : <LegacyApp demo={demo} />);
 }).catch(error => {
   console.error('TOVARIX configuration error', error);
   root.render(<main><h1>TOVARIX</h1><p role="alert">Sozlashda xatolik / Configuration error</p></main>);

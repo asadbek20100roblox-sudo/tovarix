@@ -33,3 +33,5 @@ npm run android:sync
 - `npm run test:browser` использует `TOVARIX_TEST_WEB`. Запустите production preview, собранный с URL и публичным ключом локального Supabase. Для этого теста локальная регистрация должна выдавать сессию сразу. Укажите `TOVARIX_CHROMIUM` или установите Chromium командой `npx playwright install chromium`.
 
 Развёртывание, биллинг и ограничения описаны в [docs/RELEASE.md](docs/RELEASE.md).
+
+Release changes and upgrade notes are available in [docs/V0.2-READINESS.md](docs/V0.2-READINESS.md).

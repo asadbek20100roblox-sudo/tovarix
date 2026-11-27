@@ -51,8 +51,54 @@ test('tenant isolation, stock atomicity and idempotent checkout', async () => {
     await assert.rejects(db.query("select public.open_promo_order($1,'STANDARD',1,'relay','promo-order2','TEST001')", [business]), /already assigned/);
     await assert.rejects(db.query("select public.capture_payment('relay','promo-event','promo-order',119000,'UZS')"), /order mismatch/);
     assert.equal((await db.query("select public.capture_payment('relay','promo-event','promo-order',107100,'UZS') as captured")).rows[0].captured, true);
+    await db.exec(login(1));
+    const { rows: [{ id: otherStore }] } = await db.query("insert into public.stores(business_id,name) values($1,'Second') returning id", [business]);
+    const { rows: [{ id: weighted }] } = await db.query(
+      `insert into public.products(business_id,name,barcode,price,cost,attributes) values($1,'Bulk','WEIGHT',5,3,'{"unit":"kg"}') returning id`, [business]);
+    await db.query("select public.receive_purchase_batch($1,$2,null,'BATCH-A',$3)", [business, store,
+      JSON.stringify([{ product_id: weighted, quantity: 2, total: 6 }, { product_id: product, quantity: 1, total: 3000 }])]);
+    await db.query("select public.count_stock($1,$2,$3,2,1.5,'Counted')", [business, store, weighted]);
+    await assert.rejects(db.query("select public.count_stock($1,$2,$3,2,1,'Stale')", [business, store, weighted]), /stock changed/);
+    await db.query('select public.change_shift($1,$2,0,false)', [business, store]);
+    const weightedCheckout = (id, price, operator = user(1)) => db.query(
+      'select public.checkout($1,$2,gen_random_uuid(),$3,3,0,0,3)', [business, store,
+        JSON.stringify([{ product_id: id, quantity: 0.5, expected_price: price, operator_id: operator }])]);
+    await assert.rejects(weightedCheckout(product, 5000), /weight product/);
+    await assert.rejects(weightedCheckout(weighted, 6), /price changed/);
+    await assert.rejects(weightedCheckout(weighted, 5, user(3)), /incorrect sale operator/);
+    const { rows: [{ id: weighedSale }] } = await db.query(
+      'select public.checkout($1,$2,gen_random_uuid(),$3,3,0,0,3) as id', [business, store,
+        JSON.stringify([{ product_id: weighted, quantity: 0.5, expected_price: 5, operator_id: user(1) }])]);
+    const returnRequest = '00000000-0000-0000-0000-000000000008';
+    const returnPart = () => db.query("select public.partial_return($1,$2,$3,$4,0.25,'Return') as id", [business, weighedSale, returnRequest, weighted]);
+    const firstPart = await returnPart();
+    assert.deepEqual((await returnPart()).rows, firstPart.rows);
+    await assert.rejects(db.query("select public.partial_return($1,$2,gen_random_uuid(),$3,0.5,'Excess')", [business, weighedSale, weighted]), /exceeds sold/);
+    await assert.rejects(db.query("select public.return_sale($1,$2,'Full')", [business, weighedSale]), /remaining items/);
+    await db.query("select public.record_expense($1,$2,200,'Delivery')", [business, store]);
+    await db.query('select public.change_shift($1,$2,2,true)', [business, store]);
+    const cash = (await db.query('select expected_cash,cash_variance from public.shifts order by opened_at desc limit 1')).rows[0];
+    assert.equal(Number(cash.expected_cash), 2);
+    assert.equal(Number(cash.cash_variance), 0);
+    const { rows: [{ id: ticket }] } = await db.query(
+      "insert into public.support_tickets(business_id,subject,message) values($1,'Receipt','Need help') returning id", [business]);
+    await assert.rejects(db.query("select public.resolve_ticket($1,'No')", [ticket]), /permission denied/);
+    await db.exec('reset role');
+    await db.query('insert into commerce_private.platform_admins values($1)', [user(4)]);
+    await db.exec(login(4));
+    const {rows:[{ panel }]} = await db.query('select public.platform_overview() as panel');
+    assert.equal(panel.tickets[0].id, ticket);
+    await db.query("select public.resolve_ticket($1,'Resolved')", [ticket]);
+    await db.exec(login(1));
+    assert.equal((await db.query('select resolution from public.support_tickets')).rows[0].resolution, 'Resolved');
+    await db.query('select public.set_store_scope($1,$2,$3)', [business, user(3), [store]]);
+    const summary = await db.query('select public.billing_overview($1) as billing', [business]);
+    assert.equal(summary.rows[0].billing.payments.length, 2);
     await db.exec(login(3));
-    assert.equal((await db.query('select count(*)::int as n from public.products')).rows[0].n, 1);
+    assert.equal((await db.query('select count(*)::int as n from public.products')).rows[0].n, 2);
+    assert.deepEqual((await db.query('select id from public.stores')).rows, [{ id: store }]);
+    await assert.rejects(db.query('select public.change_shift($1,$2,0,false)', [business, otherStore]), /permission denied/);
+    await assert.rejects(db.query('select public.billing_overview($1)', [business]), /permission denied/);
     assert.equal((await db.query('select count(*)::int as n from public.sales')).rows[0].n, 0);
     await db.exec(login(2));
     assert.deepEqual((await db.query('select * from public.products')).rows, []);
