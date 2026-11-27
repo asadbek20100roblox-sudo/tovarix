@@ -39,7 +39,7 @@ Deno.serve(async request => {
   const url = Deno.env.get('SUPABASE_URL');
   const publicKey = Deno.env.get('SUPABASE_ANON_KEY');
   const serviceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
-  if (!key || !url || !publicKey || !serviceKey) return json({ error: 'Integration unavailable' }, 503);
+  if (!url || !publicKey || !serviceKey) return json({ error: 'Integration unavailable' }, 503);
 
   try {
     const input = await readBoundedBody(request,2_000_000);
@@ -55,6 +55,7 @@ Deno.serve(async request => {
     const client = createClient(url, publicKey, { global: { headers: { Authorization: authorization } } });
     const { data: identity, error: authError } = await client.auth.getUser(authorization.slice(7));
     if (authError || !identity.user) return json({ error: 'Authentication required' }, 401);
+    if (!key) return json({ error: 'AI provider not configured' }, 503);
     const { data, error } = await client.rpc('ai_context', { p_business: business });
     if (error) {
       const status = error.code === '42501' ? 403 : /quota exceeded/.test(error.message) ? 429 : error.message === 'AI disabled' ? 503 : 502;
@@ -73,7 +74,7 @@ Deno.serve(async request => {
       p_model: model, p_input: result.inputTokens, p_output: result.outputTokens,
     });
     if (logged.error) return json({ error: 'AI history could not be saved' }, 502);
-    return json({ answer: result.answer }, 200);
+    return json({ answer: result.answer, model }, 200);
   } catch (error) {
     return json({ error: error instanceof SyntaxError ? 'Invalid input' : 'AI unavailable' }, error instanceof SyntaxError ? 400 : 502);
   }
