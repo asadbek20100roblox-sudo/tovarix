@@ -1,0 +1,2 @@
+export const plans=[{id:'FREE',monthly:0,yearly:0,employees:0},{id:'START',monthly:39000,yearly:449000,employees:0},{id:'STANDARD',monthly:119000,yearly:1299000,employees:3},{id:'PLUS',monthly:249000,yearly:2599000,employees:10},{id:'PRO',monthly:599000,yearly:5999000,employees:50},{id:'PREMIUM',monthly:1219000,yearly:10999000,employees:null}] as const;
+// Display configuration only. Entitlements must be enforced by backend.
