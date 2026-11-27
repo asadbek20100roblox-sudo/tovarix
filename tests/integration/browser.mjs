@@ -58,18 +58,57 @@ test('mobile Supabase checkout, persisted offline request, and real retry', { ti
     await debt.getByLabel('Amount').fill('400');
     await debt.getByRole('button', { name: 'Record repayment' }).click();
     await page.getByRole('button', { name: /Synthetic Buyer.*600/ }).waitFor();
-    await page.route('**/rest/v1/rpc/ai_remaining', route => route.fulfill({ json:{ enabled:true,remaining:2 } }));
-    await page.route('**/functions/v1/tovarix-ai', route => route.fulfill({
-      contentType: 'text/event-stream',
-      body: 'data: '+JSON.stringify({delta:'Synthetic reply'})+'\n\ndata: '+JSON.stringify({
-        done:{id:'00000000-0000-0000-0000-000000000001',answer:'| Value |\n|---|\n| Synthetic total |',chart:[{day:'2026-11-20',revenue:150,gross_profit:null}]},
-      })+'\n\n',
-    }));
+    await page.getByRole('button',{name:'Supplier debt',exact:true}).click();
+    await page.getByRole('button',{name:'Add debt'}).click();
+    const supplier = page.getByRole('dialog',{name:'Add debt'});
+    await supplier.getByText('Add supplier',{exact:true}).click();
+    await supplier.getByRole('textbox',{name:'Supplier debt',exact:true}).fill('Synthetic Supplier');
+    await supplier.locator('details').getByRole('button',{name:'Save',exact:true}).click();
+    await supplier.locator('.debt-form').getByRole('combobox').selectOption({label:'Synthetic Supplier'});
+    await supplier.getByLabel('Due date').fill('2027-01-01');
+    await supplier.getByLabel('Amount').fill('300');
+    await supplier.locator('.debt-form').getByRole('button',{name:'Save',exact:true}).click();
+    await page.getByRole('button',{name:/Synthetic Supplier.*300/}).waitFor();
+    assert.equal(await page.getByRole('button',{name:/Synthetic Buyer.*600/}).count(),0);
+    await page.getByRole('button',{name:'Customer debt',exact:true}).click();
+    await page.getByRole('button',{name:/Synthetic Buyer.*600/}).waitFor();
+    let quota = { enabled:false,remaining:0 };
+    let failureMode = 'offline';
+    let requests = 0;
+    await page.route('**/rest/v1/rpc/ai_remaining', route => route.fulfill({ json:quota }));
+    await page.route('**/functions/v1/tovarix-ai', route => {
+      requests++;
+      if (failureMode==='offline') return route.abort('internetdisconnected');
+      if (failureMode==='unauthorized') return route.fulfill({status:401,json:{error:'Authentication required'}});
+      return route.fulfill({
+        contentType: 'text/event-stream',
+        body: 'data: '+JSON.stringify({delta:'Synthetic reply'})+'\n\ndata: '+JSON.stringify({
+          done:{id:'00000000-0000-0000-0000-000000000001',answer:'| Value |\n|---|\n| Synthetic total |',chart:[{day:'2026-11-20',revenue:150,gross_profit:null}]},
+        })+'\n\n',
+      });
+    });
     await menuTab('TOVARIX AI');
     await page.getByRole('heading', {name:'Let’s grow your business together.'}).waitFor();
+    await page.getByText('AI is currently disabled.',{exact:true}).waitFor();
     await page.getByRole('button', {name:'Analyze today’s sales'}).click();
-    await page.getByRole('button', {name:'Send',exact:true}).click();
+    const send=page.getByRole('button',{name:'Send',exact:true});
+    assert.equal(await send.isDisabled(),true);
+    quota={enabled:true,remaining:0};
+    await page.getByRole('button',{name:'Check again'}).click();
+    await page.getByText('Your daily AI limit has been reached.').waitFor();
+    assert.equal(await send.isDisabled(),true);
+    quota={enabled:true,remaining:2};
+    await page.getByRole('button',{name:'Check again'}).click();
+    await page.getByText(/Requests remaining today · 2/).waitFor();
+    await page.getByRole('textbox',{name:'Ask a question'}).press('Enter');
+    await page.getByText('Message not sent. Try again.').waitFor();
+    failureMode='unauthorized';
+    await send.click();
+    await page.getByText('Your session ended. Sign in again.').waitFor();
+    failureMode='none';
+    await send.click();
     await page.getByRole('cell',{name:'Synthetic total'}).waitFor();
+    assert.equal(requests,3);
     await screenshot('ai-chat');
     page.once('dialog',dialog=>void dialog.accept('Weekly report'));
     await page.getByRole('button',{name:'Rename chat'}).click();
@@ -141,9 +180,27 @@ test('mobile Supabase checkout, persisted offline request, and real retry', { ti
     await page.getByText(/Stock 0/).waitFor();
     await page.getByText('Synchronization history', { exact: true }).click();
     assert.equal(await page.getByText('Confirmed', { exact: true }).count(), 2);
-    await page.getByText('Needs review', { exact: true }).waitFor();
+    await page.getByText('Needs review', { exact: true }).waitFor({timeout:25000});
     await page.getByText('insufficient stock', { exact: true }).waitFor();
     assert.equal(await page.evaluate(() => Object.keys(localStorage).filter(key => key.startsWith('tovarix.outbox.')).length), 0);
+    await page.getByRole('spinbutton',{name:'Change'}).fill('1');
+    await page.getByRole('textbox',{name:'Reason'}).fill('Credit sale fixture');
+    await page.getByRole('button',{name:'Save',exact:true}).click();
+    await page.getByText(/Stock 1/).waitFor();
+    await page.locator('.bottom-navigation').getByRole('button',{name:'Checkout',exact:true}).click();
+    await page.getByRole('button',{name:'+Tea',exact:true}).click();
+    await page.getByRole('button',{name:'Sell on account',exact:true}).click();
+    await page.getByRole('combobox',{name:'Customers',exact:true}).selectOption({label:'Synthetic Buyer'});
+    await page.getByRole('textbox',{name:'Due date',exact:true}).fill('2027-01-01');
+    await page.getByRole('button',{name:'Submit sale',exact:true}).click();
+    await page.getByRole('heading',{name:'Internal receipt'}).waitFor();
+    await page.getByText('Sell on account',{exact:true}).waitFor();
+    await page.setViewportSize({width:1280,height:900});
+    await page.locator('.desktop-navigation').getByRole('button',{name:'Customer debts',exact:true}).click();
+    await page.getByRole('heading',{name:'Customer debts',exact:true,level:2}).waitFor();
+    await page.getByRole('button',{name:/Synthetic Buyer.*5,000/}).waitFor();
+    assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);
+
   } finally {
     await browser.close();
   }

@@ -14,9 +14,9 @@ export function Brand() {
   return <span className="wordmark"><span className="brand-mark"><Store size={19} strokeWidth={2.15} /></span><span>TOVARIX<small>PIXELFORGE UZ</small></span></span>;
 }
 
-export function AppNavigation({ pages, tab, go, lang, profile, role, online, alerts, showStatus = true }: {
+export function AppNavigation({ pages, tab, go, lang, profile, role, online, alerts, showStatus = true, desktop = false }: {
   pages: string[]; tab: number; go: (tab: number) => void; lang: Language;
-  profile?: string; role?: string; online: boolean; alerts: string[]; showStatus?: boolean;
+  profile?: string; role?: string; online: boolean; alerts: string[]; showStatus?: boolean; desktop?: boolean;
 }) {
   const drawer = useRef<HTMLDialogElement>(null);
   const notifications = useRef<HTMLDialogElement>(null);
@@ -56,6 +56,13 @@ export function AppNavigation({ pages, tab, go, lang, profile, role, online, ale
       <div className="notice-title"><h2>{t[1]}</h2><button className="icon-button" aria-label={t[3]} onClick={() => notifications.current?.close()}><X size={20} /></button></div>
       {alerts.length ? <ul>{alerts.map((alert, index) => <li key={index}>{alert}</li>)}</ul> : <p>{t[8]}</p>}
     </dialog>
+    {desktop&&<nav className="desktop-navigation" aria-label="TOVARIX">
+      <Brand/>
+      {pages.map((label,id)=>{
+        const Icon=icons[id]??ClipboardList;
+        return <button type="button" key={id} aria-current={tab===id?'page':undefined} onClick={()=>route(id)}><Icon size={17}/>{label}</button>;
+      })}
+    </nav>}
     <nav className="bottom-navigation" aria-label="TOVARIX">
       <span className="nav-selection" style={{ transform: 'translateX(' + Math.max(active, 0) * 100 + '%)', opacity: active >= 0 ? 1 : 0 }} />
       {primary.map(id => {
