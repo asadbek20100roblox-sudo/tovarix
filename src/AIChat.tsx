@@ -35,6 +35,12 @@ const copy = {
     proposal: 'Price change proposal', confirm: 'Confirm', cancel: 'Cancel', status: ['Pending','Applied','Cancelled','Expired'],
   },
 };
+const delivery = {
+  uz: { disabled:'AI yordamchi hozircha faol emas.', quota:'Kunlik AI limitingiz tugadi.', offline:'Internet bilan bog‘lanishda xatolik yuz berdi.', auth:'Sessiya tugagan. Qayta kiring.', forbidden:'Bu korxonada AI uchun ruxsat yo‘q.', retry:'Xabar yuborilmadi. Qayta urinib ko‘ring.', check:'Qayta tekshirish' },
+  ru: { disabled:'AI-помощник пока отключён.', quota:'Дневной лимит AI исчерпан.', offline:'Нет соединения с интернетом.', auth:'Сессия истекла. Войдите снова.', forbidden:'У вас нет доступа к AI для этого предприятия.', retry:'Сообщение не отправлено. Повторите попытку.', check:'Проверить снова' },
+  en: { disabled:'AI is currently disabled.', quota:'Your daily AI limit has been reached.', offline:'Check your internet connection.', auth:'Your session ended. Sign in again.', forbidden:'You do not have AI access for this business.', retry:'Message not sent. Try again.', check:'Check again' },
+} as const;
+
 const accepted = ['image/jpeg','image/png','image/webp','application/pdf'];
 type Chat = { id: string; title: string };
 type Turn = { id: string; question: string; answer: string };
@@ -53,6 +59,9 @@ function attachment(file: File) {
 
 export function AIChat({ client, business, user, lang }: { client: SupabaseClient; business: string; user: string; lang: Language }) {
   const t = copy[lang];
+  const message = delivery[lang];
+  const [online,setOnline]=useState(navigator.onLine);
+  const [denied,setDenied]=useState(false);
   const [chats, setChats] = useState<Chat[]>([]);
   const [selected, setSelected] = useState<string | null>(null);
   const [legacy, setLegacy] = useState(false);
@@ -80,6 +89,8 @@ export function AIChat({ client, business, user, lang }: { client: SupabaseClien
       client.rpc('ai_conversations',{ p_business: business, p_action: 'list' }),
       client.rpc('ai_remaining',{ p_business: business }),
     ]);
+    setDenied(remaining.error?.code==='42501');
+    if (remaining.error?.code==='42501') { setQuota(undefined); return; }
     if (list.error || remaining.error) throw list.error ?? remaining.error;
     setChats(list.data ?? []);
     setQuota(remaining.data);
@@ -105,12 +116,15 @@ export function AIChat({ client, business, user, lang }: { client: SupabaseClien
     return () => generation.current?.abort();
   }, [refresh,t.failure]);
   useEffect(() => {
-    const online = () => {
+    const connected = () => {
+      setOnline(true);
       void refresh().catch(() => setError(t.failure));
       void load(selected,legacy).then(setMessages).catch(() => setError(t.failure));
     };
-    window.addEventListener('online',online);
-    return () => window.removeEventListener('online',online);
+    const disconnected = () => setOnline(false);
+    window.addEventListener('online',connected);
+    window.addEventListener('offline',disconnected);
+    return () => { window.removeEventListener('online',connected); window.removeEventListener('offline',disconnected); };
   },[legacy,load,refresh,selected,t.failure]);
 
   function reset(id: string | null, isLegacy = false) {
@@ -132,16 +146,23 @@ export function AIChat({ client, business, user, lang }: { client: SupabaseClien
     finally { setLoading(false); }
   }
 
+  const blocked = !online ? message.offline : denied ? message.forbidden : quota?.enabled === false ? message.disabled : quota?.remaining === 0 ? message.quota : null;
   async function submit(event: FormEvent) {
     event.preventDefault();
-    if (!question.trim() || generation.current || !quota?.enabled || quota.remaining <= 0) return;
+    if (!question.trim() || generation.current || blocked || !quota) return;
     const prompt = question.trim();
     const request = new AbortController();
     generation.current = request;
     setBusy(true); setError(''); setNotice(''); setChart([]); setPoint(undefined); setProposal(undefined);
     setDraft({ question: prompt, answer: '' });
     let id = selected;
+    let failure: string = message.retry;
     try {
+      const session = await client.auth.getSession();
+      if (session.error || session.data.session?.user.id !== user) {
+        failure = message.auth;
+        throw new Error('Session unavailable');
+      }
       if (!id) {
         const created = await client.rpc('ai_conversations',{p_business: business,p_action: 'create',p_title: prompt.slice(0,100)});
         if (created.error) throw created.error;
@@ -151,9 +172,14 @@ export function AIChat({ client, business, user, lang }: { client: SupabaseClien
       const image = file ? await attachment(file) : undefined;
       request.signal.throwIfAborted();
       const response = await client.functions.invoke<Response>('tovarix-ai',{
+        headers: { Authorization: 'Bearer '+session.data.session.access_token },
         body: { business, question: prompt, image, conversation: id, language: lang, stream: true }, signal: request.signal,
       });
-      if (response.error || !response.data?.body) throw response.error ?? new Error('Response unavailable');
+      if (response.error || !response.data?.body) {
+        const status = (response.error?.context as Response | undefined)?.status;
+        failure = status===401 ? message.auth : status===403 ? message.forbidden : status===429 ? message.quota : message.retry;
+        throw response.error ?? new Error('Response unavailable');
+      }
       const reader = response.data.body.getReader();
       const cancelStream = () => { void reader.cancel().catch(() => undefined); };
       request.signal.addEventListener('abort',cancelStream,{once:true});
@@ -189,9 +215,9 @@ export function AIChat({ client, business, user, lang }: { client: SupabaseClien
       setQuestion(''); setFile(undefined);
       if (attachmentInput.current) attachmentInput.current.value = '';
       await handleProposal(final.id,'get');
-      tail.current?.scrollIntoView({ block: 'nearest' });
+      requestAnimationFrame(()=>tail.current?.scrollIntoView({ block: 'nearest' }));
     } catch {
-      if (!request.signal.aborted) setError(t.failure);
+      if (!request.signal.aborted) setError(navigator.onLine ? failure : message.offline);
       if (id && !request.signal.aborted) await load(id,false).then(setMessages).catch(() => undefined);
     } finally {
       if (generation.current === request) generation.current = null;
@@ -223,7 +249,9 @@ export function AIChat({ client, business, user, lang }: { client: SupabaseClien
         {selected && <><button type="button" className="icon-button" disabled={controlsDisabled} onClick={() => void changeChat('rename')} aria-label={t.rename}><Pencil size={17}/></button>
         <button type="button" className="icon-button" disabled={controlsDisabled} onClick={() => void changeChat('delete')} aria-label={t.remove}><Trash2 size={17}/></button></>}
       </div>
-      {quota && <small className="ai-quota">{quota.enabled ? t.remaining+' · '+quota.remaining : t.disabled}</small>}
+      {blocked ? <p className="ai-quota" role="status">{blocked}</p> : quota && <small className="ai-quota">{t.remaining+' · '+quota.remaining}</small>}
+      {(!quota || blocked) && !loading && online && !denied &&
+        <button type="button" onClick={()=>void refresh().then(()=>setError('')).catch(()=>setError(message.retry))}>{message.check}</button>}
     </header>
     <dialog className="debt-sheet" ref={history} aria-label={t.history}>
       <form method="dialog"><button aria-label={t.cancel}>×</button></form><h3>{t.history}</h3>
@@ -267,7 +295,12 @@ export function AIChat({ client, business, user, lang }: { client: SupabaseClien
     <div ref={tail}/>
     {error && <p role="alert">{error}</p>}{notice && <p role="status">{notice}</p>}
     <form className="ai-compose" onSubmit={event=>void submit(event)}>
-      <textarea aria-label={t.input} placeholder={t.input} value={question} onChange={event=>setQuestion(event.target.value)} rows={2} maxLength={2000} disabled={busy}/>
+      <textarea aria-label={t.input} placeholder={t.input} value={question} onChange={event=>setQuestion(event.target.value)} rows={2} maxLength={2000} disabled={busy} enterKeyHint="send" onKeyDown={event=>{
+        if(event.key==='Enter'&&!event.shiftKey&&!event.nativeEvent.isComposing) {
+          event.preventDefault();
+          event.currentTarget.form?.requestSubmit();
+        }
+      }}/>
       {file && <small>{file.name} <button type="button" aria-label={t.cancel} onClick={()=>{setFile(undefined);if(attachmentInput.current)attachmentInput.current.value='';}}>×</button></small>}
       <div className="controls">
         <label className="icon-button" title={t.attach}><FilePlus size={19} aria-hidden/>
@@ -276,7 +309,7 @@ export function AIChat({ client, business, user, lang }: { client: SupabaseClien
               else {setFile(next);setError('');}}}/>
         </label>
         {busy ? <button type="button" className="icon-button" aria-label={t.stop} onClick={()=>generation.current?.abort()}><Square size={18}/></button> :
-          <button type="submit" className="icon-button primary-button" aria-label={t.send} disabled={!quota?.enabled||quota.remaining<=0||!question.trim()}><ArrowUp size={20}/></button>}
+          <button type="submit" className="icon-button primary-button" aria-label={t.send} disabled={!quota||Boolean(blocked)||!question.trim()}><ArrowUp size={20}/></button>}
       </div>
     </form>
   </section>;
