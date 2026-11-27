@@ -1,5 +1,22 @@
 import { createClient } from 'npm:@supabase/supabase-js@2';
-import { GeminiProvider } from './provider.ts';
+import { GeminiProvider, resolveGeminiModel } from './provider.ts';
+
+async function readBoundedBody(request: Request, maximum: number) {
+  const reader = request.body?.getReader();
+  if (!reader) return '';
+  const decoder = new TextDecoder();
+  const chunks: string[] = [];
+  let size = 0;
+  try {
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (done) return chunks.join('') + decoder.decode();
+      size += value.byteLength;
+      if (size > maximum) { await reader.cancel(); return null; }
+      chunks.push(decoder.decode(value, { stream:true }));
+    }
+  } finally { reader.releaseLock(); }
+}
 
 Deno.serve(async request => {
   const origin = request.headers.get('Origin');
@@ -18,15 +35,15 @@ Deno.serve(async request => {
   if (!authorization?.startsWith('Bearer ')) return json({ error: 'Authentication required' }, 401);
 
   const key = Deno.env.get('GEMINI_API_KEY');
-  const model = Deno.env.get('GEMINI_MODEL');
+  const configuredModel = Deno.env.get('GEMINI_MODEL');
   const url = Deno.env.get('SUPABASE_URL');
   const publicKey = Deno.env.get('SUPABASE_ANON_KEY');
   const serviceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
-  if (!key || !model || !url || !publicKey || !serviceKey) return json({ error: 'Integration unavailable' }, 503);
+  if (!key || !url || !publicKey || !serviceKey) return json({ error: 'Integration unavailable' }, 503);
 
   try {
-    const input = await request.text();
-    if (input.length > 2_000_000) return json({ error: 'Request too large' }, 413);
+    const input = await readBoundedBody(request,2_000_000);
+    if (input === null) return json({ error: 'Request too large' }, 413);
     const { business, question, image } = JSON.parse(input);
     if (typeof business !== 'string' || !/^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(business)
         || typeof question !== 'string' || !question.trim() || question.length > 2000
@@ -39,8 +56,11 @@ Deno.serve(async request => {
     const { data: identity, error: authError } = await client.auth.getUser(authorization.slice(7));
     if (authError || !identity.user) return json({ error: 'Authentication required' }, 401);
     const { data, error } = await client.rpc('ai_context', { p_business: business });
-    if (error) return json({ error: error.code === '42501' ? 'Access denied' : error.message === 'AI quota exceeded' ? 'Quota exceeded' : 'Context unavailable' },
-      error.code === '42501' ? 403 : error.message === 'AI quota exceeded' ? 429 : 502);
+    if (error) {
+      const status = error.code === '42501' ? 403 : /quota exceeded/.test(error.message) ? 429 : error.message === 'AI disabled' ? 503 : 502;
+      return json({ error: status === 403 ? 'Access denied' : status === 429 ? 'Quota exceeded' : status === 503 ? 'AI unavailable' : 'Context unavailable' }, status);
+    }
+    const model = await resolveGeminiModel(key, configuredModel);
     const provider = new GeminiProvider(key, model);
     const history = await client.from('ai_history').select('question,answer').eq('business_id', business)
       .eq('user_id', identity.user.id).order('created_at', { ascending: false }).limit(4);

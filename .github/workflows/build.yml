@@ -35,23 +35,29 @@ jobs:
         env:
           TOVARIX_TEST_POSTGRES: postgresql://postgres:integration-only@127.0.0.1:5432/postgres
       - run: npm run build
+      - run: npm run build:control
+      - uses: actions/upload-artifact@v4
+        with:
+          name: tovarix-v0.4.0-control
+          path: dist-control
+          if-no-files-found: error
       - run: npx playwright install --with-deps firefox
       - run: npm run test:single
         env:
           TOVARIX_SCREENSHOTS: screens
       - uses: actions/upload-artifact@v4
         with:
-          name: tovarix-v0.3.0-standalone
+          name: tovarix-v0.4.0-standalone
           path: dist-single/TOVARIX.html
           if-no-files-found: error
       - uses: actions/upload-artifact@v4
         with:
-          name: tovarix-v0.3.0-screens
+          name: tovarix-v0.4.0-screens
           path: screens
           if-no-files-found: error
       - uses: actions/upload-artifact@v4
         with:
-          name: tovarix-v0.3.0-web
+          name: tovarix-v0.4.0-web
           path: dist
           if-no-files-found: error
   android:
@@ -76,6 +82,6 @@ jobs:
       - run: cd android && bash gradlew assembleDebug
       - uses: actions/upload-artifact@v4
         with:
-          name: tovarix-v0.3.0-debug-apk
+          name: tovarix-v0.4.0-debug-apk
           path: android/app/build/outputs/apk/debug/*.apk
           if-no-files-found: error

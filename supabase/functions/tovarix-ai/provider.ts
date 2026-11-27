@@ -33,3 +33,25 @@ export class GeminiProvider implements AIProvider {
     };
   }
 }
+
+
+let cachedModel: { id: string; expires: number } | undefined;
+export async function resolveGeminiModel(key: string, configured?: string) {
+  if (configured) return configured;
+  if (cachedModel && cachedModel.expires > Date.now()) return cachedModel.id;
+  const response = await fetch('https://generativelanguage.googleapis.com/v1beta/models?pageSize=1000', {
+    headers: { 'x-goog-api-key': key },
+    signal: AbortSignal.timeout(7000),
+  });
+  if (!response.ok) throw new Error('Gemini models unavailable');
+  const payload = await response.json();
+  const stable = (payload.models ?? []).filter((model: { name?: string; supportedGenerationMethods?: string[] }) =>
+    /^models\/gemini-\d+(?:\.\d+)*-flash-lite$/.test(model.name ?? '') &&
+    model.supportedGenerationMethods?.includes('generateContent'));
+  const selected = stable.find((model: { name: string }) => model.name === 'models/gemini-3.1-flash-lite')
+    ?? stable.sort((a: {name: string}, b: {name: string}) => b.name.localeCompare(a.name, 'en', { numeric: true }))[0];
+  if (!selected) throw new Error('No stable Gemini Flash-Lite model available');
+  const id = selected.name.slice('models/'.length) as string;
+  cachedModel = { id, expires: Date.now() + 15 * 60 * 1000 };
+  return id;
+}

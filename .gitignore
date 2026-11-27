@@ -8,3 +8,5 @@ dist/
 /supabase/.temp/
 
 /dist-single/
+
+/dist-control/

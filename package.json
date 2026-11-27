@@ -1,6 +1,6 @@
 {
   "name": "tovarix",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "private": true,
   "type": "module",
   "scripts": {
@@ -14,7 +14,8 @@
     "test:postgres": "node --test tests/integration/postgres.mjs",
     "test:browser": "node --test tests/integration/browser.mjs",
     "build:single": "vite build --config vite.single.config.ts",
-    "test:single": "node --test tests/integration/single.mjs"
+    "test:single": "node --test tests/integration/single.mjs",
+    "build:control": "vite build --config vite.control.config.ts"
   },
   "dependencies": {
     "@capacitor/android": "^7.0.0",
