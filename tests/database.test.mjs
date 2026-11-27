@@ -133,6 +133,19 @@ test('tenant isolation, stock atomicity and idempotent checkout', async () => {
     await db.query("select public.set_staff($1,$2,'cashier',array['sell','cost'])",[business,user(3)]);
     await db.exec(login(3));
     assert.equal(Number((await db.query('select cost from public.sales_access where id=$1',[employeeSale])).rows[0].cost),3000);
+    await db.exec(login(1));
+    await db.query("select public.set_staff($1,$2,'cashier',array['sell','analytics','ai'])",[business,user(3)]);
+    await db.query('select public.set_store_scope($1,$2,null)', [business,user(3)]);
+    await db.exec('reset role');
+    await db.exec('update commerce_private.platform_settings set ai_enabled=true');
+    await db.exec(login(3));
+    const { rows:[{ report: maskedReport }] } = await db.query(
+      'select public.sales_report($1,current_date-1,current_date+2) as report',[business]);
+    assert.ok(maskedReport.totals.revenue > 0);
+    assert.equal(maskedReport.totals.profit,null);
+    const {rows:[{ context: maskedContext }]} = await db.query('select public.ai_context($1) as context',[business]);
+    assert.ok(maskedContext.daily_sales.length > 0);
+    assert.ok(maskedContext.daily_sales.every(day => day.gross_profit_uzs === null));
     await db.exec(login(2));
     assert.deepEqual((await db.query('select id from public.products')).rows, []);
     await assert.rejects(db.query("select public.adjust_stock($1,$2,$3,1,'Other')", [business, store, product]), /permission denied/);
