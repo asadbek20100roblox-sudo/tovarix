@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">TOVARIX</string>
+    <string name="title_activity_main">TOVARIX</string>
+    <string name="package_name">uz.pixelforge.tovarix</string>
+    <string name="custom_url_scheme">uz.pixelforge.tovarix</string>
+</resources>

@@ -4,3 +4,9 @@ dist/
 !.env.example
 *.jks
 *.keystore
+
+/supabase/.temp/
+
+/dist-single/
+
+/dist-control/

@@ -1,23 +1,54 @@
 {
   "name": "tovarix",
-  "version": "0.1.0",
+  "version": "0.5.4",
   "private": true,
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "vite build",
+    "build": "npm run build:single && vite build && node scripts/copy-single.mjs",
     "android:add": "cap add android",
-    "android:sync": "npm run build && cap sync android"
+    "android:sync": "npm run build && cap sync android",
+    "typecheck": "tsc",
+    "lint": "eslint src",
+    "test": "node --disable-warning=ExperimentalWarning --experimental-strip-types --test tests/*.test.mjs",
+    "test:postgres": "node --test tests/integration/postgres.mjs",
+    "test:browser": "node --test tests/integration/browser.mjs",
+    "build:single": "vite build --config vite.single.config.ts",
+    "test:single": "node --test tests/integration/single.mjs",
+    "build:control": "vite build --config vite.control.config.ts"
   },
   "dependencies": {
-    "@capacitor/core": "^7.0.0",
     "@capacitor/android": "^7.0.0",
+    "@capacitor/core": "^7.0.0",
+    "@supabase/supabase-js": "2.119.2",
+    "@zxing/browser": "0.2.1",
+    "@zxing/library": "0.23.0",
+    "bwip-js": "4.11.4",
+    "exceljs": "4.4.0",
+    "lucide-react": "1.82.0",
     "react": "^19.0.0",
-    "react-dom": "^19.0.0"
+    "react-dom": "^19.0.0",
+    "react-markdown": "^10.1.0",
+    "remark-gfm": "^4.0.1"
   },
   "devDependencies": {
     "@capacitor/cli": "^7.0.0",
+    "@electric-sql/pglite": "0.6.0",
+    "@eslint/js": "10.0.1",
+    "@types/node": "26.6.11",
+    "@types/react": "19.3.3",
+    "@types/react-dom": "19.3.0",
+    "eslint": "10.15.0",
+    "pg": "8.23.1",
+    "playwright": "1.65.1",
+    "typescript": "^5.7.0",
+    "typescript-eslint": "8.74.0",
     "vite": "^6.0.0",
-    "typescript": "^5.7.0"
+    "vite-plugin-singlefile": "2.3.4"
+  },
+  "overrides": {
+    "exceljs": {
+      "uuid": "11.1.1"
+    }
   }
 }

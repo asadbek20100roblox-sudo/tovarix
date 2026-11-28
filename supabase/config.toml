@@ -1,0 +1,10 @@
+project_id = "tovarix"
+
+[functions.tovarix-ai]
+verify_jwt = false
+
+[functions.payment-webhook]
+verify_jwt = false
+
+[functions.control-login]
+verify_jwt = false

@@ -1,4 +1,30 @@
-import React,{useState} from 'react';import{createRoot}from'react-dom/client';import './style.css';
-type Product={id:string,name:string,barcode:string,price:number,stock:number};type Sale={id:string,total:number,date:string,items:{id:string,name:string,qty:number,price:number}[]};type DB={products:Product[],sales:Sale[]};const key='tovarix-v1';function load():DB{try{const d=JSON.parse(localStorage.getItem(key)||'null');return d&&Array.isArray(d.products)&&Array.isArray(d.sales)?d:{products:[],sales:[]}}catch{return{products:[],sales:[]}}}const money=(n:number)=>n.toLocaleString('uz-UZ')+" so‘m";
-function App(){const [db,setDB]=useState(load),[tab,T]=useState('Bosh sahifa'),[query,Q]=useState(''),[cart,C]=useState<Record<string,number>>({}),[error,E]=useState(''),[light,L]=useState(false);function save(next:DB){try{localStorage.setItem(key,JSON.stringify(next));setDB(next);return true}catch{E('Saqlashda xatolik');return false}}const total=db.products.reduce((s,p)=>s+p.price*(cart[p.id]||0),0);const filtered=db.products.filter(p=>(p.name+' '+p.barcode).toLowerCase().includes(query.toLowerCase()));function add(p:Product){C(old=>{if((old[p.id]||0)>=p.stock)return old;return {...old,[p.id]:(old[p.id]||0)+1}})}
-return <main className={light?'light':''}><header><div><b>TOVARIX</b><small>BY PIXELFORGE UZ · v0.1</small></div><button onClick={()=>L(!light)} aria-label="Mavzu">{light?'☾':'☀'}</button></header><nav>{['Bosh sahifa','Kassa','Mahsulotlar','Ombor'].map(t=><button className={tab===t?'active':''} key={t} onClick={()=>{T(t);Q('');E('')}}>{t}</button>)}</nav>{error&&<p role="alert">{error}</p>}{tab==='Bosh sahifa'?<><h1>Biznes ko‘rsatkichlari</h1><section className="grid">{[['Savdo',money(db.sales.reduce((s,x)=>s+x.total,0))],['Mahsulotlar',db.products.length],['Ombordagi birliklar',db.products.reduce((s,p)=>s+p.stock,0)],['Cheklar',db.sales.length]].map(([k,v])=><article key={k}><small>{k}</small><h2>{v}</h2></article>)}</section><h2>So‘nggi savdolar</h2>{db.sales.slice(-10).reverse().map(s=><article key={s.id}>{new Date(s.date).toLocaleString()} · {money(s.total)}</article>)}</>:<><h1>{tab}</h1>{tab==='Mahsulotlar'&&<form onSubmit={e=>{e.preventDefault();const f=new FormData(e.currentTarget),name=String(f.get('name')).trim(),barcode=String(f.get('barcode')).trim(),price=Number(f.get('price')),stock=Number(f.get('stock'));if(!name||!barcode||!Number.isSafeInteger(price)||price<0||!Number.isSafeInteger(stock)||stock<0||db.products.some(p=>p.barcode===barcode))return E('Ma’lumotlarni tekshiring: shtrix-kod takrorlanmasligi kerak');if(save({...db,products:[...db.products,{id:crypto.randomUUID(),name,barcode,price,stock}]})){e.currentTarget.reset();E('')}}}><input name="name" required placeholder="Mahsulot nomi"/><input name="barcode" required placeholder="Shtrix-kod"/><input name="price" type="number" min="0" step="1" required placeholder="Narx"/><input name="stock" type="number" min="0" step="1" required placeholder="Qoldiq"/><button>Qo‘shish</button></form>}<input value={query} onChange={e=>Q(e.target.value)} placeholder="Nomi yoki shtrix-kod" onKeyDown={e=>{if(e.key==='Enter'&&tab==='Kassa'){const p=db.products.find(p=>p.barcode===query.trim());if(p){add(p);Q('')}}}}/>{filtered.map(p=><article key={p.id}><b>{p.name}</b><small>{p.barcode} · {p.stock} dona</small><span>{money(p.price)}</span>{tab==='Kassa'&&<button disabled={(cart[p.id]||0)>=p.stock} onClick={()=>add(p)}>+</button>}</article>)}{tab==='Kassa'&&<section><h2>Savat</h2>{db.products.filter(p=>cart[p.id]>0).map(p=><article key={p.id}>{p.name} × {cart[p.id]} <button onClick={()=>C(old=>({...old,[p.id]:Math.max(0,old[p.id]-1)}))}>−</button></article>)}<h2>{money(total)}</h2><button disabled={!Object.values(cart).some(n=>n>0)} onClick={()=>{if(!Number.isSafeInteger(total)||db.products.some(p=>(cart[p.id]||0)>p.stock))return E('Savdoni tekshiring');if(save({products:db.products.map(p=>({...p,stock:p.stock-(cart[p.id]||0)})),sales:[...db.sales,{id:crypto.randomUUID(),total,date:new Date().toISOString(),items:db.products.filter(p=>cart[p.id]>0).map(p=>({id:p.id,name:p.name,qty:cart[p.id],price:p.price}))}]})){C({});E('')}}}>Naqd savdoni saqlash</button></section>}</>}<footer>Mahalliy sinov versiyasi · Serverga ulanmagan</footer></main>}createRoot(document.getElementById('root')!).render(<App/>);
+import { Capacitor } from '@capacitor/core';
+import { createRoot } from 'react-dom/client';
+import { DemoWorkspace } from './DemoWorkspace';
+import { LegacyApp } from './LegacyApp';
+import { Workspace } from './Workspace';
+import { connectSupabase } from './supabase';
+import './style.css';
+
+const root = createRoot(document.getElementById('root')!);
+const mode = new URLSearchParams(location.search).get('mode');
+void (mode === 'demo' || mode === 'local' ? Promise.resolve(null) : connectSupabase()).then(supabase => {
+  let hasLegacyData = false;
+  try { hasLegacyData = localStorage.getItem('tovarix-v1') !== null; } catch { /* Storage is optional for the demo. */ }
+  root.render(supabase ? <Workspace client={supabase} />
+    : mode === 'demo' ? <DemoWorkspace />
+    : mode === 'local' || (Capacitor.isNativePlatform() && hasLegacyData) ? <LegacyApp />
+    : <main className="workspace light"><h1>TOVARIX</h1>
+        <p role="alert">Bulutga ulanish mavjud emas / Подключение к облаку недоступно / Cloud connection unavailable</p>
+        <a href="?mode=demo">Demo</a>
+      </main>);
+
+}).catch(error => {
+  console.error('TOVARIX configuration error', error);
+  root.render(<main><h1>TOVARIX</h1><p role="alert">Sozlashda xatolik / Configuration error</p></main>);
+});
+
+if ('serviceWorker' in navigator && import.meta.env.PROD && !Capacitor.isNativePlatform()
+  && (location.protocol === 'https:' || location.hostname === 'localhost' || location.hostname === '127.0.0.1')) {
+  void navigator.serviceWorker.register('/sw.js').catch(error => console.warn('PWA installation failed', error));
+}
