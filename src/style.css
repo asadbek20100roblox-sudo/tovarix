@@ -359,3 +359,42 @@ button:active:not(:disabled) { transform: scale(.98); }
   .debt-filter button,.desktop-navigation button { min-height:42px; }
 }
 @media print { .desktop-navigation { display:none!important; } }
+
+.feature-hub {
+  width: min(680px, calc(100% - 24px));
+  max-height: min(86dvh, 820px);
+  border: 1px solid var(--border);
+  border-radius: 22px;
+  padding: clamp(12px, 3vw, 24px);
+  background: var(--card);
+  color: var(--text);
+  box-shadow: var(--shadow);
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+.feature-hub[open] { animation: page-in var(--motion-panel) var(--curve-out) both; }
+.feature-hub h2 { margin: 0; }
+.feature-hub h3 { margin: 1rem 0 .5rem; }
+.feature-search { margin-top: .8rem; }
+.feature-search input { flex: 1 1 180px; min-width: 0; }
+.feature-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(160px,100%),1fr)); gap: .5rem; }
+.feature-card { margin:0; position:relative; padding:0; background:var(--surface); box-shadow:none; }
+.feature-launch { border:0; background:transparent; min-height:72px; width:100%; padding:.65rem 44px .65rem .65rem;
+  align-items:flex-start; flex-direction:column; text-align:start; white-space:normal; overflow-wrap:anywhere; }
+.feature-launch small { color: var(--muted); }
+.feature-star { position:absolute; inset:5px 5px auto auto; min-width:36px; min-height:36px; padding:0; }
+.feature-star[aria-pressed=true] { color:var(--blue-text); background:var(--blue-soft); }
+.bottom-navigation button[aria-current=page] { background: var(--blue-soft); }
+.drawer-content { display:flex; flex-direction:column; padding-bottom:max(17px,env(safe-area-inset-bottom)); }
+.drawer-links { flex:1; grid-template-rows:repeat(6,auto) 1fr; }
+.drawer-links .navigation-settings { align-self:end; }
+.desktop-navigation .navigation-settings { margin-top:auto; }
+@media(max-width:600px) {
+  .feature-hub { width:100%; max-width:none; margin:auto 0 0; border-radius:22px 22px 0 0;
+    padding-bottom:max(14px,env(safe-area-inset-bottom)); }
+}
+@media(prefers-reduced-motion:reduce) { .feature-hub[open] { animation:none; } }
+.feature-plans { margin:0 .6rem .6rem; }
+.purchase-entry[hidden] { display:none; }
+.app-bar-start { flex:1 1 0; }
+.app-bar-actions { flex:0 0 auto; }

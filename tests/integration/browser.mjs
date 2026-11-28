@@ -31,8 +31,13 @@ test('mobile Supabase checkout, persisted offline request, and real retry', { ti
     await page.getByRole('textbox', { name: 'Location', exact: true }).fill('Main');
     await page.getByRole('button', { name: 'Create business', exact: true }).click();
     const menuTab = async name => {
-      await page.locator('.bottom-navigation').getByRole('button', { name: 'Menu', exact: true }).click();
-      await page.getByRole('dialog', { name: 'Menu' }).getByRole('button', { name, exact: true }).click();
+      if(name==='Settings'){
+        await page.locator('.app-bar').getByRole('button',{name:'Menu',exact:true}).click();
+        await page.getByRole('dialog',{name:'Menu'}).getByRole('button',{name,exact:true}).click();
+      }else{
+        await page.locator('.bottom-navigation').getByRole('button',{name:'More',exact:true}).click();
+        await page.getByRole('dialog',{name:'All tools'}).getByRole('button',{name,exact:true}).click();
+      }
     };
     const screenshot = async name => {
       const directory = process.env.TOVARIX_SCREENSHOTS;
@@ -42,6 +47,9 @@ test('mobile Supabase checkout, persisted offline request, and real retry', { ti
     };
     await menuTab('Customers');
     await page.getByRole('textbox', { name: 'Name', exact: true }).fill('Synthetic Buyer');
+    await page.locator('.bottom-navigation').getByRole('button',{name:'Overview',exact:true}).click();
+    await menuTab('Customers');
+    assert.equal(await page.getByRole('textbox',{name:'Name',exact:true}).inputValue(),'Synthetic Buyer');
     await page.getByRole('button', { name: 'Save', exact: true }).click();
     await page.getByText('Synthetic Buyer', { exact: true }).waitFor();
     await menuTab('Customer debts');
@@ -124,14 +132,13 @@ test('mobile Supabase checkout, persisted offline request, and real retry', { ti
     await subscriptions.getByText(/UZS · Pending/).waitFor();
     assert.equal(await subscriptions.getByRole('link', { name: 'Contact us on Telegram' }).getAttribute('href'), 'https://t.me/uzPixelForge');
     await screenshot('subscription-requests');
-    await page.locator('.bottom-navigation').getByRole('button', { name: 'Menu', exact: true }).click();
-    await page.getByRole('dialog', { name: 'Menu' }).getByRole('button', { name: 'Products', exact: true }).click();
+    await menuTab('Products');
     await page.getByRole('textbox', { name: 'Name', exact: true }).fill('Tea');
     await page.getByRole('button', { name: 'Generate code' }).click();
     await page.getByRole('spinbutton', { name: 'Price', exact: true }).fill('5000');
     await page.getByRole('spinbutton', { name: 'Cost', exact: true }).fill('3000');
     await page.getByRole('button', { name: 'Save', exact: true }).click();
-    await page.getByText('Tea', { exact: true }).waitFor();
+    await page.getByText('Tea', { exact: true }).filter({visible:true}).waitFor();
     await page.getByRole('button', { name: 'Label', exact: true }).click();
     const barcodeImage = page.locator('.label-print img');
     await barcodeImage.waitFor();
@@ -139,11 +146,11 @@ test('mobile Supabase checkout, persisted offline request, and real retry', { ti
     const download = page.waitForEvent('download');
     await page.getByRole('button', { name: 'Export Excel', exact: true }).click();
     assert.equal((await download).suggestedFilename(), 'tovarix-catalog.xlsx');
-    await page.locator('.bottom-navigation').getByRole('button', { name: 'Inventory', exact: true }).click();
+    await menuTab('Inventory');
     await page.getByRole('spinbutton', { name: 'Change' }).fill('2');
     await page.getByRole('textbox', { name: 'Reason' }).fill('Initial stock');
     await page.getByRole('button', { name: 'Save', exact: true }).click();
-    await page.getByText(/Stock 2/).waitFor();
+    await page.getByText(/Stock 2/).filter({visible:true}).waitFor();
 
     await page.locator('.bottom-navigation').getByRole('button', { name: 'Checkout', exact: true }).click();
     await page.getByRole('spinbutton', { name: 'Cash in drawer' }).fill('0');
@@ -176,8 +183,8 @@ test('mobile Supabase checkout, persisted offline request, and real retry', { ti
     await context.setOffline(false);
 
     await page.getByRole('heading', { name: 'Internal receipt' }).waitFor();
-    await page.locator('.bottom-navigation').getByRole('button', { name: 'Inventory', exact: true }).click();
-    await page.getByText(/Stock 0/).waitFor();
+    await menuTab('Inventory');
+    await page.getByText(/Stock 0/).filter({visible:true}).waitFor();
     await page.getByText('Synchronization history', { exact: true }).click();
     assert.equal(await page.getByText('Confirmed', { exact: true }).count(), 2);
     await page.getByText('Needs review', { exact: true }).waitFor({timeout:25000});
@@ -186,7 +193,7 @@ test('mobile Supabase checkout, persisted offline request, and real retry', { ti
     await page.getByRole('spinbutton',{name:'Change'}).fill('1');
     await page.getByRole('textbox',{name:'Reason'}).fill('Credit sale fixture');
     await page.getByRole('button',{name:'Save',exact:true}).click();
-    await page.getByText(/Stock 1/).waitFor();
+    await page.getByText(/Stock 1/).filter({visible:true}).waitFor();
     await page.locator('.bottom-navigation').getByRole('button',{name:'Checkout',exact:true}).click();
     await page.getByRole('button',{name:'+Tea',exact:true}).click();
     await page.getByRole('button',{name:'Sell on account',exact:true}).click();
@@ -194,9 +201,10 @@ test('mobile Supabase checkout, persisted offline request, and real retry', { ti
     await page.getByRole('textbox',{name:'Due date',exact:true}).fill('2027-01-01');
     await page.getByRole('button',{name:'Submit sale',exact:true}).click();
     await page.getByRole('heading',{name:'Internal receipt'}).waitFor();
-    await page.getByText('Sell on account',{exact:true}).waitFor();
+    await page.locator('.receipt').getByText('Sell on account',{exact:true}).waitFor();
     await page.setViewportSize({width:1280,height:900});
-    await page.locator('.desktop-navigation').getByRole('button',{name:'Customer debts',exact:true}).click();
+    await page.locator('.desktop-navigation').getByRole('button',{name:'Finance',exact:true}).click();
+    await page.getByRole('dialog',{name:'Finance'}).getByRole('button',{name:'Customer debts',exact:true}).click();
     await page.getByRole('heading',{name:'Customer debts',exact:true,level:2}).waitFor();
     await page.getByRole('button',{name:/Synthetic Buyer.*5,000/}).waitFor();
     assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);

@@ -54,6 +54,7 @@ function readPreference(key: string) {
 export function DemoWorkspace({ standalone = false }: { standalone?: boolean }) {
   const [state, setState] = useState(initialDemo);
   const [tab, go] = useState(0);
+  const [visited,setVisited]=useState([0]);
   const [period, setPeriod] = useState(1);
   const [lang, setLang] = useState<Language>(() => {
     const value = readPreference('tovarix.language');
@@ -104,7 +105,7 @@ export function DemoWorkspace({ standalone = false }: { standalone?: boolean }) 
   let total: number | null;
   try { total = saleTotal(picked.map(p => ({ price: p.price, quantity: cart[p.id] })), 0); } catch { total = null; }
   const visible = state.products.filter(p => (p.names[loc] + ' ' + p.code).toLowerCase().includes(query.trim().toLowerCase()));
-  const change = (page: number) => { go(page); setQuery(''); setError(''); setStatus(''); window.scrollTo(0, 0); };
+  const change = (page: number) => { go(page); setVisited(old=>old.includes(page)?old:[...old,page]); setError(''); setStatus(''); window.scrollTo(0, 0); };
   const add = (p: Product) => setCart(old => ({ ...old, [p.id]: Math.min(p.stock, (old[p.id] || 0) + 1) }));
 
   function submitSale() {
@@ -117,17 +118,8 @@ export function DemoWorkspace({ standalone = false }: { standalone?: boolean }) 
     setStatus(t[15]);
   }
 
-  return <main className={'workspace demo-workspace ' + (dark ? 'dark' : 'light')}>
-    <div className="brand-strip"><Brand /><div className="controls">
-      <select aria-label="Language" value={lang} onChange={e => setLang(e.target.value as Language)}>
-        {Object.entries(languageNames).map(([id, name]) => <option key={id} value={id}>{name}</option>)}
-      </select>
-      <button type="button" className="icon-button" aria-label={t[25]} aria-pressed={dark} onClick={() => setDark(!dark)}>{dark ? <Sun size={18} /> : <Moon size={18} />}</button>
-    </div></div>
-    <AppNavigation pages={pages} tab={tab} go={change} lang={lang} online={false} profile="Aziza" role={t[19]} alerts={critical.map(p => p.name + ' · ' + p.quantity)} />
-    <div className="demo-banner"><CircleAlert size={16} /><strong>{t[0]}</strong><span>{t[1]}</span></div>
-    {status && <p className="success-note" role="status">{status}</p>}
-    {error && <p role="alert">{error}</p>}
+  function renderPage(tab:number) {
+    return <>
     {(tab === 0 || tab === 11) && <Dashboard lang={lang} days={period} setDays={setPeriod} storeName={t[2]} money={money} go={change} data={{
       revenue: sales.reduce((sum, s) => sum + s.total, 0),
       profit: sales.reduce((sum, s) => sum + s.total - s.cost, 0), count: sales.length,
@@ -193,5 +185,19 @@ export function DemoWorkspace({ standalone = false }: { standalone?: boolean }) 
     </div>}
     {tab === 14 && <div className="page-enter"><h1>{t[7]}</h1>{[...state.sales].reverse().slice(0, 24).map(s => <article className="activity-row" key={s.id}><span className="panel-icon green"><ReceiptText size={17} /></span><div><strong>{t[33]}</strong><small>{new Date(s.date).toLocaleString(lang)}</small></div><strong>{money(s.total)}</strong></article>)}</div>}
     {[4, 6, 7, 9, 10, 12, 13].includes(tab) && <div className="page-enter"><h1>{pages[tab]}</h1><p className="empty-state">{t[24]}</p></div>}
+    </>;
+  }
+  return <main className={'workspace demo-workspace ' + (dark ? 'dark' : 'light')}>
+    <div className="brand-strip"><Brand /><div className="controls">
+      <select aria-label="Language" value={lang} onChange={e => setLang(e.target.value as Language)}>
+        {Object.entries(languageNames).map(([id, name]) => <option key={id} value={id}>{name}</option>)}
+      </select>
+      <button type="button" className="icon-button" aria-label={t[25]} aria-pressed={dark} onClick={() => setDark(!dark)}>{dark ? <Sun size={18} /> : <Moon size={18} />}</button>
+    </div></div>
+    <AppNavigation desktop account="demo" pages={pages} tab={tab} go={change} lang={lang} online={false} profile="Aziza" role={t[19]} alerts={critical.map(p => p.name + ' · ' + p.quantity)} />
+    <div className="demo-banner"><CircleAlert size={16} /><strong>{t[0]}</strong><span>{t[1]}</span></div>
+    {status && <p className="success-note" role="status">{status}</p>}
+    {error && <p role="alert">{error}</p>}
+    {visited.map(page=><div key={page} hidden={page!==tab}>{renderPage(page)}</div>)}
   </main>;
 }

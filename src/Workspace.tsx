@@ -10,6 +10,7 @@ import { Barcode, CreditCard, LogOut, Moon, Package, Plus, RotateCw, Search, Sho
 import { CustomerDebts, debtTitle } from './CustomerDebts';
 import { AccountAccess } from './AccountAccess';
 import { AppNavigation, Brand } from './AppNavigation';
+import { toolAccess } from './navigation';
 import { Dashboard, dashboardCopy } from './Dashboard';
 import { HardwareDiagnostics } from './HardwareDiagnostics';
 import { SupportDesk } from './SupportDesk';
@@ -139,13 +140,30 @@ function BusinessPicker({ client, user, lang, profile }: { client: SupabaseClien
   const [store, setStore] = useState(() => stores[0]?.id ?? '');
   const [error, setError] = useState('');
   const [revision, refresh] = useState(0);
-  const [membership, setMembership] = useState<{ business: string; role: string; name: string | null } | null>(null);
+  const [membership, setMembership] = useState<{ business: string; role: string; name: string | null; permissions: string[]; scoped: boolean } | null>(null);
   useEffect(() => {
     if (!business) return;
     let active = true;
-    void client.from('members').select('role,display_name').eq('business_id', business).eq('user_id', user).maybeSingle()
-      .then(result => { if (active) setMembership(result.data ? { business, role: result.data.role, name: result.data.display_name } : null); });
-    return () => { active = false; };
+    const cachedSell='tovarix.checkout-access.'+user+'.'+business;
+    const refreshMember=()=>{
+      if(!navigator.onLine){
+        setMembership(current=>current?.business===business ? current : load(cachedSell,false)
+          ? {business,role:'cashier',name:null,permissions:['sell'],scoped:true} : null);
+        return;
+      }
+      void client.from('members').select('role,display_name,permissions,store_scope,blocked_at').eq('business_id',business).eq('user_id',user).maybeSingle()
+        .then(result=>{
+          if(!active)return;
+          const row=result.data;
+          const member=row&&!row.blocked_at
+            ? {business,role:row.role,name:row.display_name,permissions:row.permissions??[],scoped:row.store_scope!==null} : null;
+          setMembership(member);
+          if(!result.error)try{localStorage.setItem(cachedSell,JSON.stringify(member?.permissions.includes('sell')??false));}catch{/* Optional storage. */}
+        });
+    };
+    refreshMember();
+    window.addEventListener('online',refreshMember);
+    return () => { active=false;window.removeEventListener('online',refreshMember); };
   }, [business, client, user]);
   const t = labels[lang];
 
@@ -218,7 +236,7 @@ function BusinessPicker({ client, user, lang, profile }: { client: SupabaseClien
       </select></label>
       <button className="icon-button" aria-label={t[42]} onClick={() => refresh(n => n + 1)}><RotateCw size={17} /></button>
     </div>
-    {business && store && <Operations key={business + store} {...{ client, user, business, store, stores, lang, refresh, profile: membership?.business === business && membership.name || profile, role, owner }} />}
+    {business && store && <Operations key={business + store} {...{ client, user, business, store, stores, lang, refresh, profile: membership?.business === business && membership.name || profile, role, owner }} member={membership?.business===business ? membership : null} />}
     <details><summary>{t[27]}</summary><form onSubmit={e => void create(e)}>
       <input name="name" aria-label={t[6]} placeholder={t[6]} required maxLength={200} />
       <input name="store" aria-label={t[7]} placeholder={t[7]} required maxLength={200} />
@@ -235,9 +253,9 @@ function BusinessPicker({ client, user, lang, profile }: { client: SupabaseClien
   </>;
 }
 
-function Operations({ client, user, business, store, stores, lang, refresh, profile, role, owner }: {
+function Operations({ client, user, business, store, stores, lang, refresh, profile, role, owner, member }: {
   client: SupabaseClient; user: string; business: string; store: string; stores: Named[];
-  profile: string; role?: string; owner: boolean;
+  profile: string; role?: string; owner: boolean; member: {permissions:string[];scoped:boolean}|null;
   lang: Language; refresh: (update: (n: number) => number) => void;
 }) {
   const scope = [user, business, store].join('.');
@@ -260,6 +278,15 @@ function Operations({ client, user, business, store, stores, lang, refresh, prof
   const [queueReady, setQueueReady] = useState(false);
   const [online, setOnline] = useState(navigator.onLine);
   const [tab, setTab] = useState(0);
+  const [visited,setVisited]=useState([0]);
+  const [features,setFeatures]=useState<{purchases:boolean;expenses:boolean;suppliers:boolean}>();
+  useEffect(()=>{
+    let active=true;
+    void client.rpc('workspace_features',{p_business:business}).then(result=>{
+      if(active&&!result.error)setFeatures(result.data);
+    });
+    return ()=>{active=false;};
+  },[client,business]);
   const [period, setPeriod] = useState(1);
   const [cashOverview, setCashOverview] = useState<{ expenses: number; cash: number | null } | null>(null);
   const [error, setError] = useState('');
@@ -281,7 +308,8 @@ function Operations({ client, user, business, store, stores, lang, refresh, prof
   const video = useRef<HTMLVideoElement>(null);
   const [receipt, setReceipt] = useState<Sale | null>(null);
   const [label, setLabel] = useState<(Product & { image: string }) | null>(null);
-  const [contacts, setContacts] = useState<Contact[]>([]);
+  const [customers,setCustomers]=useState<Contact[]>([]);
+  const [suppliers,setSuppliers]=useState<Contact[]>([]);
   const [checkoutCustomers,setCheckoutCustomers]=useState<Contact[]>([]);
   const [staff, setStaff] = useState<Staff[]>([]);
   const [purchases, setPurchases] = useState<Purchase[]>([]);
@@ -342,7 +370,7 @@ function Operations({ client, user, business, store, stores, lang, refresh, prof
     let active = true;
     if (tab === 1 || tab === 6 || tab === 7 || tab === 10) {
       void client.from('contacts').select('id,name,phone').eq('business_id', business).eq('kind', tab === 1 || tab === 6 ? 'customer' : 'supplier').order('name')
-        .then(result => { if (active) { (tab===1?setCheckoutCustomers:setContacts)(result.data ?? []); if (result.error) setError(result.error.message); } });
+        .then(result => { if (active) { (tab===1?setCheckoutCustomers:tab===6?setCustomers:setSuppliers)(result.data ?? []); if (result.error) setError(result.error.message); } });
     }
     if (tab === 10) {
       void client.from('purchase_access').select('id,product_id,quantity,total_uzs,reference').eq('business_id', business)
@@ -569,23 +597,16 @@ function Operations({ client, user, business, store, stores, lang, refresh, prof
 
   const d = dashboardCopy[lang];
   const pages = [...t.slice(0, 6), ...x.slice(0, 3), 'TOVARIX AI', ...management.slice(0, 4), t[28], debtTitle[lang]];
+  const access=(id:number)=>toolAccess(id,owner,member?.permissions??[],Boolean(member?.scoped),features?.purchases);
   function change(page: number) {
-    setTab(page); setQuery(''); setCatalogPage(0); setScanning(false); setError(''); setContacts([]);
+    if(access(page)==='hidden')return;
+    setVisited(old=>old.includes(page)?old:[...old,page]);
+    setTab(page); setCatalogPage(0); setScanning(false); setError('');
     window.scrollTo(0, 0);
   }
-  return <>
-    <AppNavigation desktop {...{ pages, tab, lang, profile, role, online }} go={change}
-      alerts={[...announcements.map(notice=>notice.title+' · '+notice.message),...critical.map(p => p.name + ' · ' + p.quantity)].slice(0, 20)} />
-    {tab !== 0 && <div className="page-heading page-enter"><div><p className="section-caption">{branchName}</p><h1>{pages[tab]}</h1></div></div>}
-    {error && <p role="alert">{error}</p>}
-    {pending.length > 0 && <p role="status">{t[19]} ({pending.length}) <button disabled={busy || !online} onClick={() => void synchronize()}>{t[20]}</button></p>}
-    {history.length > 0 && <details><summary>{queueText[0]}</summary>
-      {history.map(entry => <article key={entry.request.p_request}>
-        <strong>{queueText[entry.status === 'confirmed' ? 1 : 2]}</strong>
-        <small>{entry.request.p_request} · {money(entry.request.p_expected)}</small>
-        {entry.reason && <span>{entry.reason}</span>}
-      </article>)}
-    </details>}
+  const activeTab=access(tab)==='hidden'?0:tab;
+  function renderPage(tab:number) {
+    return <>
     {tab === 0 && <Dashboard lang={lang} days={period} setDays={setPeriod} storeName={branchName} money={money} go={change}
       limited={true} data={{
         revenue: periodSales.reduce((sum, s) => sum + s.total, 0),
@@ -686,7 +707,7 @@ function Operations({ client, user, business, store, stores, lang, refresh, prof
         }} />
         {tab === 1 && <button onClick={() => setScanning(!scanning)} aria-pressed={scanning}><Barcode size={19} />{t[31]}</button>}
       </div>
-      {scanning && <video ref={video} autoPlay muted playsInline />}
+      {scanning && activeTab===1 && <video ref={video} autoPlay muted playsInline />}
       <div className={tab === 1 ? 'pos' : ''}><div>
         {matchingProducts.slice(shownCatalogPage * 30, (shownCatalogPage + 1) * 30).map(p => <article className={tab === 1 ? 'product-row' : 'inventory-card'} key={p.id}>
           <span className="product-icon blue"><Package size={20} /></span>
@@ -793,7 +814,7 @@ function Operations({ client, user, business, store, stores, lang, refresh, prof
         <input name="phone" type="tel" maxLength={50} placeholder={x[3]} aria-label={x[3]} />
         <button>{t[12]}</button>
       </form>
-      {contacts.map(c => <article key={c.id}><strong>{c.name}</strong>{c.phone && <small>{c.phone}</small>}</article>)}
+      {(tab===6?customers:suppliers).map(c => <article key={c.id}><strong>{c.name}</strong>{c.phone && <small>{c.phone}</small>}</article>)}
     </>}
     {tab === 8 && <>
       <form onSubmit={e => {
@@ -853,7 +874,11 @@ function Operations({ client, user, business, store, stores, lang, refresh, prof
       <AIChat key={business+'-'+user} {...{client,business,user,lang}} />
     </Suspense>}
     {tab === 10 && <>
-      <form onSubmit={e => void mutate(e, async data => {
+      {features?.purchases===false&&<p className="notice">
+        {({uz:'Yangi xaridlar: START yoki yuqori tarif',ru:'Новые закупки доступны с тарифа START',en:'New purchases require START or higher'})[lang]}
+        {owner&&<button type="button" onClick={()=>change(5)}>{({uz:'Tariflar',ru:'Тарифы',en:'Plans'})[lang]}</button>}
+      </p>}
+      <form className="purchase-entry" hidden={features?.purchases===false} onSubmit={e => void mutate(e, async data => {
         const rows = data.getAll('product').map((product_id, i) => ({
           product_id, quantity: Number(data.getAll('quantity')[i]), total: Number(data.getAll('total')[i]),
         }));
@@ -864,7 +889,7 @@ function Operations({ client, user, business, store, stores, lang, refresh, prof
         if (!result.error) setPurchaseRows(1);
         return result;
       })}>
-        <select name="supplier" aria-label={x[1]}><option value="">{management[6]}</option>{contacts.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}</select>
+        <select name="supplier" aria-label={x[1]}><option value="">{management[6]}</option>{suppliers.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}</select>
         <input name="reference" maxLength={120} required placeholder={management[4]} aria-label={management[4]} />
         {Array.from({ length: purchaseRows }, (_, i) => <fieldset className="controls" key={i}>
           <select name="product" aria-label={t[2] + ' ' + (i + 1)} required><option value="">{t[2]}</option>
@@ -906,7 +931,11 @@ function Operations({ client, user, business, store, stores, lang, refresh, prof
       {report.totals.revenue > 0 && <div role="img" className="tender-chart" aria-label={t[16] + ': ' + money(report.totals.cash) + ', ' + t[17] + ': ' + money(report.totals.card)}
         style={{ backgroundImage: 'conic-gradient(#508cf7 0 ' + 100 * report.totals.cash / report.totals.revenue + '%, #28b594 0)' }} />}
     </>}
-    {tab === 12 && <section><h2>{cashText[2]}</h2>
+    {tab === 12 && features?.expenses===false && <section>
+      <p>{({uz:'Xarajatlar: START yoki yuqori tarif',ru:'Расходы доступны с тарифа START',en:'Expenses require START or higher'})[lang]}</p>
+      {owner&&<button type="button" onClick={()=>change(5)}>{({uz:'Tariflar',ru:'Тарифы',en:'Plans'})[lang]}</button>}
+    </section>}
+    {tab === 12 && features?.expenses!==false && <section><h2>{cashText[2]}</h2>
       <form onSubmit={e => void mutate(e, data => client.rpc('record_expense', {
         p_business: business, p_store: store, p_amount: Number(data.get('amount')), p_description: data.get('description'),
       }))}>
@@ -918,6 +947,22 @@ function Operations({ client, user, business, store, stores, lang, refresh, prof
     </section>}
     {tab === 15 && <CustomerDebts {...{ client, business, lang }} />}
     {tab === 13 && <SupportDesk {...{ client, lang, business }} />}
+    </>;
+  }
+  return <>
+    <AppNavigation desktop account={user} canUpgrade={owner} access={access} tab={activeTab} {...{ pages, lang, profile, role, online }} go={change}
+      alerts={[...announcements.map(notice=>notice.title+' · '+notice.message),...critical.map(p => p.name + ' · ' + p.quantity)].slice(0, 20)} />
+    {activeTab !== 0 && <div className="page-heading page-enter"><div><p className="section-caption">{branchName}</p><h1>{pages[activeTab]}</h1></div></div>}
+    {error && <p role="alert">{error}</p>}
+    {pending.length > 0 && <p role="status">{t[19]} ({pending.length}) <button disabled={busy || !online} onClick={() => void synchronize()}>{t[20]}</button></p>}
+    {history.length > 0 && <details><summary>{queueText[0]}</summary>
+      {history.map(entry => <article key={entry.request.p_request}>
+        <strong>{queueText[entry.status === 'confirmed' ? 1 : 2]}</strong>
+        <small>{entry.request.p_request} · {money(entry.request.p_expected)}</small>
+        {entry.reason && <span>{entry.reason}</span>}
+      </article>)}
+    </details>}
+    {visited.filter(id=>access(id)!=='hidden').map(page=><div key={page} hidden={page!==activeTab}>{renderPage(page)}</div>)}
     {label && <section className="label-print">
       <b>{label.name}</b><p>{money(label.price)}</p>
       <img src={label.image} alt={label.barcode} style={{ maxWidth: '100%' }} />

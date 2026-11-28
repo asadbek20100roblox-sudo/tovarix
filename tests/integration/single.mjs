@@ -40,14 +40,20 @@ test('HTML opens offline from file with no adjacent assets', { timeout: 90000 },
     await capture('checkout');
     await page.getByRole('button', { name: 'Mahalliy demo savdosini saqlash' }).click();
     await page.getByText('Demo savdosi saqlandi').waitFor();
-    await nav.getByRole('button', { name: 'Ombor', exact: true }).click();
-    await page.getByText('Qoldiq · 41').waitFor();
+    await nav.getByRole('button', { name: 'Yana', exact: true }).click();
+    await page.getByRole('dialog',{name:'Barcha funksiyalar'}).getByRole('button',{name:'Ombor',exact:true}).click();
+    await page.getByText('Qoldiq · 41').filter({visible:true}).waitFor();
     await capture('inventory');
-    await nav.getByRole('button', { name: 'Menyu', exact: true }).click();
-    const menu = page.getByRole('dialog', { name: 'Menyu' });
+    await nav.getByRole('button', { name: 'Yana', exact: true }).click();
+    const menu = page.getByRole('dialog', { name: 'Barcha funksiyalar' });
     await menu.waitFor();
     await capture('menu');
-    await menu.getByRole('button', { name: 'Xodimlar' }).click();
+    await menu.getByRole('searchbox').fill('Xodimlar');
+    await menu.getByRole('button',{name:'Saralanganlarga qo‘shish · Xodimlar',exact:true}).click();
+    await menu.getByRole('button', { name: 'Xodimlar',exact:true }).click();
+    await nav.getByRole('button',{name:'Yana',exact:true}).click();
+    assert.equal(await menu.getByRole('heading',{name:'Saralangan',exact:true}).count(),1);
+    await menu.getByRole('button',{name:'Yopish',exact:true}).click();
     await page.getByRole('heading', { name: 'Xodimlar ro‘yxati' }).waitFor();
     await capture('employees');
     const language = page.getByRole('combobox', { name: 'Language' });
@@ -58,7 +64,8 @@ test('HTML opens offline from file with no adjacent assets', { timeout: 90000 },
     await language.selectOption('en');
     await page.getByRole('heading', { name: 'Employee directory' }).waitFor();
     await page.reload();
-    await nav.getByRole('button', { name: 'Inventory', exact: true }).click();
+    await nav.getByRole('button', { name: 'More', exact: true }).click();
+    await page.getByRole('dialog',{name:'All tools'}).getByRole('button',{name:'Inventory',exact:true}).click();
     await page.getByText('Stock · 41').waitFor();
     for (const width of [320, 360, 390, 430, 768, 1024, 1440]) {
       await page.setViewportSize({ width, height: 844 });
